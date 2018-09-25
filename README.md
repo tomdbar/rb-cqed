@@ -27,6 +27,10 @@ The IPython notebooks contain considerable overlap with one another and can best
 
 - [vStirap-hyperfine-scheme.ipyn](vStirap-notebooks/vStirap-hyperfine-scheme.ipynb) - For models that use all (or any subset) of both the excited and ground state manifolds.  Nonlinear Zeeman effects are included as above, however as all atomic levels can, in principle, be included in the model cavity birefringence effects are neglected in order that the dimension of our modelled Hilbert space does not get too unwieldy.  Additionally this notebook contains some examples of driving two-laser STIRAP transitions, where the cavity coupling is not required, to prepare or repump the atom in the desired state.  Some simple analysis of the system evolution for many emission+rempumping cycles is also included.
 
+##### [vStirap runners](vStirap-runners/)
+
+Contains an object orientied approach to solving the system from [vStirap-3lvl-complex-biref.ipyn](vStirap-notebooks/vStirap-3lvl--complex-biref.ipynb) to assist in automated parameter scanning.  [vStirap3lvlRunner](vStirap-runners/vStirap3lvlRunner.py) contains the code to set up and run an individual simulation with [vStirap-3lvl-bulk](vStirap-runners/vStirap-3lvl-bulk.ipyn) recursively calling this.
+
 ##### [Mathematica notebooks](mathematica)
 
 The notebooks in the [mathematica](mathematica) folder are not required to run the above models, however they are used to support the model.  Specifically:
