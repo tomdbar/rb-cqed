@@ -15,25 +15,35 @@ Atom-Photon Coupling in Birefringent Fabry-Perot Cavities. [_arXiv:1804.08526_ (
 
 ## Repository contents
 
-##### IPython notebooks
+##### [IPython notebooks](vStirap-notebooks/)
 
 The IPython notebooks contain considerable overlap with one another and can best be thought of as three versions of the same notebook, tailored towards modelling variations of our atom-cavity system.  Although specific functionality is included in only some of the notebooks (i.e. where I think it is most useful), it is a straightforward task to mix-and-match this for a custom model that you might be interested in.
 
-- [vStirap-3lvl.ipyn](vStirap-3lvl.ipynb) - A simplified model that considers only the three atomic states that form our lambda-system (plus one additonal `dark' state for additional atomic decay).  Cavity birefringence effects are included, however as the simple atomic structure is not representative of a particular atom, nonlinear Zeeman effects are neglected.
+- [vStirap-3lvl.ipyn](vStirap-notebooks/vStirap-3lvl.ipynb) - A simplified model that considers only the three atomic states that form our lambda-system (plus one additonal `dark' state for additional atomic decay).  Cavity birefringence effects are included, however as the simple atomic structure is not representative of a particular atom, nonlinear Zeeman effects are neglected.
 
-- [vStirap-zeeman-scheme.ipyn](vStirap-zeeman-scheme.ipynb) - For models that use all (or any subset) of the excited manifold and only the ground F=1,m_F={0,+/-1} sublevels.  As driving tranistions between these magentic sublevels often reuqires an external field to lift their degeneracy, nonlinear Zeeman effects are included along with cavity birefringence effects.
+- [vStirap-3lvl-complex-biref.ipyn](vStirap-notebooks/vStirap-3lvl--complex-biref.ipynb) - This is an extended version of the simple three-level in which we include the possibility of cavity mirrors with polarisation dependent reflectivities.  Using this notebook with identical emission rates for all polarisations is indistinguishable from the mode presented in  model in [vStirap-3lvl.ipyn](vStirap-notebooks/vStirap-3lvl.ipynb).
 
-- [vStirap-hyperfine-scheme.ipyn](vStirap-hyperfine-scheme.ipynb) - For models that use all (or any subset) of both the excited and ground state manifolds.  Nonlinear Zeeman effects are included as above, however as all atomic levels can, in principle, be included in the model cavity birefringence effects are neglected in order that the dimension of our modelled Hilbert space does not get too unwieldy.  Additionally this notebook contains some examples of driving two-laser STIRAP transitions, where the cavity coupling is not required, to prepare or repump the atom in the desired state.  Some simple analysis of the system evolution for many emission+rempumping cycles is also included.
+- [vStirap-zeeman-scheme.ipyn](vStirap-notebooks/vStirap-zeeman-scheme.ipynb) - For models that use all (or any subset) of the excited manifold and only the ground F=1,m_F={0,+/-1} sublevels.  As driving tranistions between these magentic sublevels often reuqires an external field to lift their degeneracy, nonlinear Zeeman effects are included along with cavity birefringence effects.
 
-##### Mathematica notebooks
+- [vStirap-hyperfine-scheme.ipyn](vStirap-notebooks/vStirap-hyperfine-scheme.ipynb) - For models that use all (or any subset) of both the excited and ground state manifolds.  Nonlinear Zeeman effects are included as above, however as all atomic levels can, in principle, be included in the model cavity birefringence effects are neglected in order that the dimension of our modelled Hilbert space does not get too unwieldy.  Additionally this notebook contains some examples of driving two-laser STIRAP transitions, where the cavity coupling is not required, to prepare or repump the atom in the desired state.  Some simple analysis of the system evolution for many emission+rempumping cycles is also included.
+
+##### [vStirap runners](vStirap-runners/)
+
+Contains an object orientied approach to solving the system from [vStirap-3lvl-complex-biref.ipyn](vStirap-notebooks/vStirap-3lvl--complex-biref.ipynb) to assist in automated parameter scanning.  [vStirap3lvlRunner](vStirap-runners/vStirap3lvlRunner.py) contains the code to set up and run an individual simulation with [vStirap-3lvl-bulk](vStirap-runners/vStirap-3lvl-bulk.ipyn) recursively calling this.
+
+##### [Mathematica notebooks](mathematica)
 
 The notebooks in the [mathematica](mathematica) folder are not required to run the above models, however they are used to support the model.  Specifically:
+
 - [hamiltonian-derivation.nb](mathematica/hamiltonian-derivation.nb) - Details the derivation of the Hamiltonians used to model the system.  Hopefully this demystifies the relatively complex couplings hardcoded into the IPython notebooks!
+
 - [87rb-d2-in-B-field.nb](mathematica/87rb-d2-in-B-field.nb) - Models the level structure and coupling strengths of the <sup>87</sup>Rb D<sub>2</sub> line in the presence of an exteral magnetic field.  This notebook produces the parameter files in the [params](params) folder, which in turn are imported into the vStirap-xxx-scheme.ipyn notebooks to include nonlinear Zeeman effects.
+
+- [cavity-parameters](mathematica/cavity-parameters.nb) - A simple helper notebook that calculates the cavity parameters used in our models (such as the linewidth and atom-cavity coupling rates) from physical parameters such as the cavity length, mirror curvatures and so on.  This is intendned to assist in choose physically realistic cavity parameters in the notebooks in which they are not derived.  
 
 ## Requirements
 
-Other than standard libraries (numpy, matplot lib etc.) the IPython notebooks require the [QuTiP](http://qutip.org/) package.
+Other than standard libraries (numpy, matplotlib etc.) the IPython notebooks require the [QuTiP](http://qutip.org/) package.
 
 For Mathematica, [87rb-d2-in-B-field.nb](mathematica/87rb-d2-in-B-field.nb) requires the [Atomic Density Matrix (ADM)](http://rochesterscientific.com/ADM/) package.
 
