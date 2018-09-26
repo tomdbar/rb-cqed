@@ -28,7 +28,6 @@ class RunnerDataClass:
         if isinstance(other, self.__class__):
             def remove_ignore_fields(d):
                 for k in self._eq_ignore_fields():
-                    print(k)
                     d.pop(k, None)
                 return d
 
@@ -106,7 +105,7 @@ class Cavity(RunnerDataClass):
         self.N = len(self.cavity_states)
 
     def _eq_ignore_fields(self):
-        return []
+        return ['g']
 
 @dataclass(eq=False)
 class LaserCoupling(RunnerDataClass):
@@ -118,7 +117,7 @@ class LaserCoupling(RunnerDataClass):
     pulse_shape: str = 'np.piecewise(t, [t<length_pulse], [np.sin((np.pi/length_pulse)*t)**2,0])'
 
     def _eq_ignore_fields(self):
-        return []
+        return ['omega0', 'deltaL']
 
 @dataclass(eq=False)
 class CavityCoupling(RunnerDataClass):
@@ -129,7 +128,7 @@ class CavityCoupling(RunnerDataClass):
     deltaM: int
 
     def _eq_ignore_fields(self):
-        return []
+        return ['g0','deltaC']
 
 @dataclass
 class CompiledHamiltonian:
@@ -151,7 +150,6 @@ class CompiledHamiltonian:
                    list(zip(self.cavity_couplings, cavity_couplings)):
             if x != y:
                 can_use = False
-
         return can_use
 
 class ExperimentalRunner():
@@ -298,31 +296,36 @@ class ExperimentalRunner():
         for laser_coupling in self.laser_couplings:
             g, x = laser_coupling.g, laser_coupling.x
             self.atom.check_coupling(g, x)
+
+            Omega = laser_coupling.omega0
+            Omega_lab = 'Omega_{0}{1}'.format(g, x)
             omegaL = laser_coupling.deltaL
             omegaL_lab = 'omegaL_{0}{1}'.format(g, x)
-            self.args_hams[omegaL_lab] = omegaL
+
+            self.args_hams.update({Omega_lab: Omega,
+                                   omegaL_lab: omegaL})
             self.args_hams.update(laser_coupling.args_ham)
 
             if not args_only:
                 pulse_shape = laser_coupling.pulse_shape
-                Omega = laser_coupling.omega0
+
 
                 def kb(a, b):
                     return self.ketbras[str([a, b])]
 
                 self.hams.append([
-                    [-(Omega / 2) * (
+                    [-(1 / 2) * (
                             (kb([g, 0, 0], [x, 0, 0]) + kb([g, 0, 1], [x, 0, 1]) +
                              kb([g, 1, 0], [x, 1, 0]) + kb([g, 1, 1], [x, 1, 1])) +
                             (kb([x, 0, 0], [g, 0, 0]) + kb([x, 0, 1], [g, 0, 1]) +
                              kb([x, 1, 0], [g, 1, 0]) + kb([x, 1, 1], [g, 1, 1]))
-                    ), '{0} * np.cos({1}*t)'.format(pulse_shape, omegaL_lab)],
-                    [i * (Omega / 2) * (
+                    ), '{0} * {1} * np.cos({2}*t)'.format(Omega_lab, pulse_shape, omegaL_lab)],
+                    [i * (1 / 2) * (
                             (kb([x, 0, 0], [g, 0, 0]) + kb([x, 0, 1], [g, 0, 1]) +
                              kb([x, 1, 0], [g, 1, 0]) + kb([x, 1, 1], [g, 1, 1])) -
                             (kb([g, 0, 0], [x, 0, 0]) - kb([g, 0, 1], [x, 0, 1]) -
                              kb([g, 1, 0], [x, 1, 0]) - kb([g, 1, 1], [x, 1, 1]))
-                    ), '{0} * np.sin({1}*t)'.format(pulse_shape, omegaL_lab)]
+                    ), '{0} * {1} * np.sin({1}*t)'.format(Omega_lab, pulse_shape, omegaL_lab)]
                 ])
 
     def __configure_cavity_couplings(self, args_only=False):
@@ -342,62 +345,74 @@ class ExperimentalRunner():
         for cavity_coupling in self.cavity_couplings:
             g, x = cavity_coupling.g, cavity_coupling.x
             self.atom.check_coupling(g, x)
+
+            g0 = cavity_coupling.g0
+            g0_lab = 'g0_{0}{1}'.format(g, x)
+
+            if g0 != self.cavity.g:
+                print('\n\tWARNING: CavityCoupling does not have the same ' + \
+                      'atom-cavity coupling rate (g0/2pi={0}MHz) as the ' + \
+                      'configured cavity (g0/2pi={1}MHz) .  I hope you ' + \
+                      'know what you are doing...'.format(
+                    *[np.round(x/(2*np.pi)) for x in [g0,self.cavity.g]]
+                ))
+
             omegaC = cavity_coupling.deltaC
             omegaC_X = omegaC + self.cavity.deltaP / 2
             omegaC_Y = omegaC - self.cavity.deltaP / 2
             omegaC_X_lab = 'omegaC_X_{0}{1}'.format(g, x)
             omegaC_Y_lab = 'omegaC_Y_{0}{1}'.format(g, x)
-            self.args_hams.update({omegaC_X_lab: omegaC_X,
+            self.args_hams.update({g0_lab: g0,
+                                   omegaC_X_lab: omegaC_X,
                                    omegaC_Y_lab: omegaC_Y})
 
             if not args_only:
-                g0 = cavity_coupling.g0
                 deltaM = cavity_coupling.deltaM
 
                 if deltaM == 1:
                     H_coupling = [
-                        [-g0 * alpha_AC * (
+                        [-1 * alpha_AC * (
                                 kb([g, 1, 0], [x, 0, 0]) + kb([g, 1, 1], [x, 0, 1]) +
                                 kb([x, 0, 0], [g, 1, 0]) + kb([x, 0, 1], [g, 1, 1])
-                        ), 'np.cos({0}*t + phi1_AC)'.format(omegaC_X_lab)],
+                        ), '{0} * np.cos({1}*t + phi1_AC)'.format(g0_lab, omegaC_X_lab)],
 
-                        [-i * g0 * alpha_AC * (
+                        [-i * 1 * alpha_AC * (
                                 kb([g, 1, 0], [x, 0, 0]) + kb([g, 1, 1], [x, 0, 1]) -
                                 kb([x, 0, 0], [g, 1, 0]) - kb([x, 0, 1], [g, 1, 1])
-                        ), 'np.sin({0}*t + phi1_AC)'.format(omegaC_X_lab)],
+                        ), '{0} * np.sin({1}*t + phi1_AC)'.format(g0_lab ,omegaC_X_lab)],
 
-                        [-g0 * beta_AC * (
+                        [-1 * beta_AC * (
                                 kb([g, 0, 1], [x, 0, 0]) + kb([g, 1, 1], [x, 1, 0]) +
                                 kb([x, 0, 0], [g, 0, 1]) + kb([x, 1, 0], [g, 1, 1])
-                        ), 'np.cos({0}*t + phi2_AC)'.format(omegaC_Y_lab)],
+                        ), '{0} * np.cos({1}*t + phi2_AC)'.format(g0_lab ,omegaC_Y_lab)],
 
-                        [-i * g0 * beta_AC * (
+                        [-i * 1 * beta_AC * (
                                 kb([g, 0, 1], [x, 0, 0]) + kb([g, 1, 1], [x, 1, 0]) -
                                 kb([x, 0, 0], [g, 0, 1]) - kb([x, 1, 0], [g, 1, 1])
-                        ), 'np.sin({0}*t + phi2_AC)'.format(omegaC_Y_lab)]
+                        ), '{0} * np.sin({1}*t + phi2_AC)'.format(g0_lab, omegaC_Y_lab)]
                     ]
 
                 elif deltaM == -1:
                     H_coupling = [
-                        [-g0 *  alpha_AC * (
+                        [-1 *  alpha_AC * (
                                 kb([g, 0, 1], [x, 0, 0]) + kb([g, 1, 1], [x, 1, 0]) +
                                 kb([x, 0, 0], [g, 0, 1]) + kb([x, 1, 0], [g, 1, 1])
-                        ), 'np.cos({0}*t - phi1_AC)'.format(omegaC_Y_lab)],
+                        ), '{0} * np.cos({1}*t - phi1_AC)'.format(g0_lab, omegaC_Y_lab)],
 
-                        [-i * g0 * alpha_AC * (
+                        [-i * 1 * alpha_AC * (
                                 kb([g, 0, 1], [x, 0, 0]) + kb([g, 1, 1], [x, 1, 0]) -
                                 kb([x, 0, 0], [g, 0, 1]) - kb([x, 1, 0], [g, 1, 1])
-                        ), 'np.sin({0}*t - phi1_AC)'.format(omegaC_Y_lab)],
+                        ), '{0} * np.sin({1}*t - phi1_AC)'.format(g0_lab, omegaC_Y_lab)],
 
-                        [g0 *  beta_AC * (
+                        [1 *  beta_AC * (
                                 kb([g, 1, 0], [x, 0, 0]) + kb([g, 1, 1], [x, 0, 1]) +
                                 kb([x, 0, 0], [g, 1, 0]) + kb([x, 0, 1], [g, 1, 1])
-                        ), 'np.cos({0}*t - phi2_AC)'.format(omegaC_X_lab)],
+                        ), '{0} * np.cos({1}*t - phi2_AC)'.format(g0_lab, omegaC_X_lab)],
 
-                        [i * g0 * beta_AC * (
+                        [i * 1 * beta_AC * (
                                 kb([g, 1, 0], [x, 0, 0]) + kb([g, 1, 1], [x, 0, 1]) -
                                 kb([x, 0, 0], [g, 1, 0]) - kb([x, 0, 1], [g, 1, 1])
-                        ), 'np.sin({0}*t - phi2_AC)'.format(omegaC_X_lab)]
+                        ), '{0} * np.sin({1}*t - phi2_AC)'.format(g0_lab, omegaC_X_lab)]
                     ]
 
                 else:
@@ -495,7 +510,7 @@ class EmissionOperatorsFactory(metaclass=Singleton):
             self.operator_series = []
 
         def get(self, t_series, R_ZL):
-            for t, R, op_series in self.operator_series:
+            for t, R, kappa1, kappa2, deltaP, op_series in self.operator_series:
                 if all([np.array_equal(t,t_series),np.array_equal(R, R_ZL)]):
                     if self.verbose: print("Found suitable pre-computed emission operator series.")
                     return op_series
@@ -576,7 +591,7 @@ class EmissionOperatorsFactory(metaclass=Singleton):
             emRot1s = [emArot1 + emBrot1 + emCrot1 for emBrot1, emCrot1 in zip(emBsrot1, emCsrot1)]
             emRot2s = [emArot2 + emBrot2 + emCrot2 for emBrot2, emCrot2 in zip(emBsrot2, emCsrot2)]
 
-            self.operator_series.append( (t_series, R_ZL, (emRot1s, emRot2s)) )
+            self.operator_series.append( (t_series, R_ZL, kappa1, kappa2, deltaP, (emRot1s, emRot2s)) )
 
             return emRot1s, emRot2s
 
@@ -624,8 +639,10 @@ class NumberOperatorsFactory(metaclass=Singleton):
             self.operator_series = []
 
         def get(self, t_series, R_ZL):
-            for t, R, op_series in self.operator_series:
-                if all([np.array_equal(t,t_series),np.array_equal(R, R_ZL)]):
+            for t, R, deltaP, op_series in self.operator_series:
+                if all([np.array_equal(t,t_series),
+                        np.array_equal(R, R_ZL),
+                        deltaP==self.cavity.deltaP]):
                     if self.verbose: print("Found suitable pre-computed number operator series.")
                     return op_series
             return self.__generate(t_series, R_ZL)
@@ -650,12 +667,78 @@ class NumberOperatorsFactory(metaclass=Singleton):
             anRots = [[an0P + an1, an0M - an1] for an1 in an1s]
             anRots = [list(i) for i in zip(*anRots)]
 
-            self.operator_series.append( (t_series, R_ZL, anRots) )
+            self.operator_series.append( (t_series, R_ZL, deltaP, anRots) )
 
             return anRots
 
         def _is_compatible(self, atom, cavity):
             if all([self.atom == atom, self.cavity == cavity]):
+                return True
+            else:
+                return False
+
+class AtomicOperatorsFactory(metaclass=Singleton):
+
+    atomic_operators = []
+
+    @classmethod
+    def get(cls, atom, ketbras, verbose):
+        for at_op in cls.atomic_operators:
+            if at_op._is_compatible(atom):
+                if verbose: print("Found suitable _AtomicOperators obj for setup.")
+                return at_op
+        else:
+            at_op = cls._AtomicOperators(atom, ketbras, verbose)
+            cls.atomic_operators.append(at_op)
+            return at_op
+
+    class _AtomicOperators():
+
+        def __init__(self, atom, ketbras, verbose):
+            self.atom = atom
+            self.ketbras = ketbras
+            self.verbose = verbose
+
+            if verbose: print("Creating new _AtomicOperators obj for setup.")
+
+            def kb(a, b):
+                return self.ketbras[str([a, b])]
+
+            atom_states=self.atom.atom_states
+            self.at_ops = {}
+            for s in atom_states:
+                self.at_ops[s]= kb([s,0,0],[s,0,0]) + kb([s,1,0],[s,1,0]) + kb([s,0,1],[s,0,1]) + kb([s,1,1],[s,1,1])
+
+            spont_decay_ops = []
+
+            for g,x,branching_ratio in self.atom.get_spontaneous_emission_channels():
+                try:
+                    spont_decay_ops.append(branching_ratio * np.sqrt(2 * self.atom.gamma) *
+                                           tensor(
+                                             basis(self.atom.M, atom_states[g]) * basis(self.atom.M, atom_states[x]).dag(),
+                                             qeye(Cavity.N),
+                                             qeye(Cavity.N)))
+                except KeyError:
+                    pass
+
+            self.sp_op = sum([x.dag() * x for x in spont_decay_ops])
+
+        def get_at_op(self, states=[]):
+            if type(states)!=list:
+                states = [states]
+            if not states:
+                return list(self.at_ops.values())
+            else:
+                try:
+                    return [self.at_ops[s] for s in states]
+                except KeyError:
+                    raise KeyError('Invalid atomic state entered.  Valid options are ', list(self.at_ops))
+
+        def get_sp_op(self):
+            return self.sp_op
+
+        def _is_compatible(self, atom):
+            if self.atom == atom:
                 return True
             else:
                 return False
@@ -677,6 +760,9 @@ class ExperimentalResults():
                                                            hamiltonian.cavity,
                                                            self.ketbras,
                                                            self.verbose)
+        self.atomic_operators = AtomicOperatorsFactory.get(hamiltonian.atom,
+                                                           self.ketbras,
+                                                           self.verbose)
 
     def get_cavity_emission(self, R_ZL):
         if type(R_ZL)!=np.matrix:
@@ -684,10 +770,12 @@ class ExperimentalResults():
         emP_t, emM_t = self.emission_operators.get(self.output.times, R_ZL)
 
         emP, emM = np.abs(np.array(
-            [expect(list(em_list), state) for em_list, state in zip(zip(emP_t, emM_t), self.output.states)]
+            [expect(list(an_list), state) for an_list, state in zip(zip(emP_t, emM_t), self.output.states)]
         )).T
 
         return emP, emM
+
+        return list(zip(*[iter(ems)] * 2))
 
     def get_cavity_number(self, R_ZL):
         if type(R_ZL)!=np.matrix:
@@ -699,3 +787,11 @@ class ExperimentalResults():
         )).T
 
         return anP, anM
+
+    def get_atomic_population(self, states=[]):
+        at_ops = self.atomic_operators.get_at_op(states)
+        return np.abs(expect(at_ops, self.output.states))
+
+    def get_total_spontaneous_emission(self):
+        sp_op = self.atomic_operators.get_sp_op()
+        return expect(sp_op, self.output.states)
