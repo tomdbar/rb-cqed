@@ -1,8 +1,12 @@
 import numpy as np
+import matplotlib.pyplot as plt
+import copy
+from shutil import copyfile
+import fileinput
 import time
 from itertools import chain, product
 from dataclasses import dataclass, field, Field, asdict
-from typing import NamedTuple
+from typing import Callable
 from qutip import *
 
 np.set_printoptions(threshold=np.inf)
@@ -117,7 +121,7 @@ class LaserCoupling(RunnerDataClass):
     pulse_shape: str = 'np.piecewise(t, [t<length_pulse], [np.sin((np.pi/length_pulse)*t)**2,0])'
 
     def _eq_ignore_fields(self):
-        return ['omega0', 'deltaL']
+        return ['omega0', 'deltaL', 'args_ham']
 
 @dataclass(eq=False)
 class CavityCoupling(RunnerDataClass):
@@ -139,6 +143,8 @@ class CompiledHamiltonian:
     laser_couplings: list
     cavity_couplings: list
     c_ops: list
+    tdname: str
+    tdfunc: Callable
 
     def can_use(self, atom, cavity, laser_couplings, cavity_couplings):
         can_use = True
@@ -151,6 +157,24 @@ class CompiledHamiltonian:
             if x != y:
                 can_use = False
         return can_use
+
+    def can_modify(self, atom, cavity, laser_couplings, cavity_couplings):
+        can_modify = True
+        if self.atom != atom:
+            can_modify = False
+        if self.cavity != cavity:
+            can_modify = False
+        for x, y in list(zip(self.cavity_couplings, cavity_couplings)):
+            if x != y:
+                can_modify = False
+        for x, y in list(zip(self.laser_couplings, laser_couplings)):
+            cx,cy = copy.copy(x),  copy.copy(y)
+            cx.pulse_shape = ''; cy.pulse_shape = ''
+            if cx != cy:
+                # If the only difference between the laser couplings is the pulse shape, we can
+                # modify the compiled .pyx file to fix this, without re-compiling it.
+                can_modify = False
+        return can_modify
 
 class ExperimentalRunner():
 
@@ -211,6 +235,21 @@ class ExperimentalRunner():
                 self.__configure_cavity_couplings(args_only=True)
                 return ham
 
+            elif ham.can_modify(self.atom, self.cavity, self.laser_couplings, self.cavity_couplings):
+                if self.verbose:
+                    print("Pre-compiled Hamiltonian, {0}.pyx, can be modified to run this experiment.".
+                          format(ham.name), end='\n\t')
+                ham_new = self.__copy_and_modify_hamiltonian(ham)
+                self.hams = ham_new.hams
+                self.c_op_list = ham_new.c_ops
+                self.__configure_c_ops(args_only=True)
+                self.__configure_laser_couplings(args_only=True)
+                self.__configure_cavity_couplings(args_only=True)
+                compiled_hamiltonians.append(ham_new)
+                if self.verbose:
+                    print("{0}.pyx is a modified copy ready to run this experiment.".format(ham_new.name))
+                return ham_new
+
         if self.verbose:
             print("No suitable pre-compiled Hamiltonian found.  Generating Cython file...", end='')
             t_start = time.time()
@@ -223,7 +262,10 @@ class ExperimentalRunner():
 
         self.hams = list(chain(*self.hams))
 
+
+        print(solver.config.tdfunc,solver.config.tdname)
         rhs_generate(self.hams, self.c_op_list, args=self.args_hams, name=name, cleanup=False)
+        print(solver.config.tdfunc, solver.config.tdname)
 
         compiled_hamiltonian = CompiledHamiltonian(name=name,
                                                    hams=self.hams,
@@ -231,7 +273,9 @@ class ExperimentalRunner():
                                                    cavity=self.cavity,
                                                    laser_couplings=self.laser_couplings,
                                                    cavity_couplings=self.cavity_couplings,
-                                                   c_ops=self.c_op_list)
+                                                   c_ops=self.c_op_list,
+                                                   tdname=solver.config.tdname,
+                                                   tdfunc=solver.config.tdfunc)
 
         compiled_hamiltonians.append(compiled_hamiltonian)
 
@@ -309,7 +353,6 @@ class ExperimentalRunner():
             if not args_only:
                 pulse_shape = laser_coupling.pulse_shape
 
-
                 def kb(a, b):
                     return self.ketbras[str([a, b])]
 
@@ -325,7 +368,7 @@ class ExperimentalRunner():
                              kb([x, 1, 0], [g, 1, 0]) + kb([x, 1, 1], [g, 1, 1])) -
                             (kb([g, 0, 0], [x, 0, 0]) - kb([g, 0, 1], [x, 0, 1]) -
                              kb([g, 1, 0], [x, 1, 0]) - kb([g, 1, 1], [x, 1, 1]))
-                    ), '{0} * {1} * np.sin({1}*t)'.format(Omega_lab, pulse_shape, omegaL_lab)]
+                    ), '{0} * {1} * np.sin({2}*t)'.format(Omega_lab, pulse_shape, omegaL_lab)]
                 ])
 
     def __configure_cavity_couplings(self, args_only=False):
@@ -420,17 +463,75 @@ class ExperimentalRunner():
 
                 self.hams.append(H_coupling)
 
+    def __copy_and_modify_hamiltonian(self, ham):
+        '''
+        Copies and modifies a pre-compiled Hamiltonian to suit the current experimental set-up
+        :param hamiltonian:
+        :return:
+        '''
+        name = 'ExperimentalRunner_Hamiltonian_{0}'.format(len(compiled_hamiltonians))
+
+        copyfile(ham.name + '.pyx', name +  '.pyx')
+
+        old_pulses = [x.pulse_shape for x in ham.laser_couplings]
+        new_pulses = [x.pulse_shape for x in self.laser_couplings]
+
+        with fileinput.FileInput(name +  '.pyx', inplace=True) as file:
+            for line in file:
+                if 'spmvpy' in line:
+                    for old, new in zip(old_pulses,new_pulses):
+                        print(line.replace(old, new), end='')
+                else:
+                    print(line, end='')
+        fileinput.close()
+
+        hams_new = ham.hams
+        for old_coupling, new_coupling in zip(ham.laser_couplings, self.laser_couplings):
+            id = '{0}{1}'.format(new_coupling.g, new_coupling.x)
+            old = old_coupling.pulse_shape
+            new = new_coupling.pulse_shape
+            hams_new = [[H, coeff.replace(old, new) if id and old in coeff else coeff]
+                        for H, coeff in hams_new]
+
+        import cProfile
+
+        if self.verbose:
+            t_start = time.time()
+            print("\n\tCompiling new rhs function.",end='...')
+        code = compile('from ' + name + ' import cy_td_ode_rhs', '<string>', 'exec')
+        exec(code, globals())
+        solver.config.tdfunc = cy_td_ode_rhs
+        if self.verbose:
+            print("done in {0} seconds".format(np.round(time.time() - t_start, 3)))
+
+        return CompiledHamiltonian(name=name,
+                                  hams=hams_new,
+                                  atom=ham.atom,
+                                  cavity=ham.cavity,
+                                  laser_couplings=self.laser_couplings,
+                                  cavity_couplings=ham.cavity_couplings,
+                                  c_ops=ham.c_ops,
+                                  tdname=name,
+                                  tdfunc=cy_td_ode_rhs)
 
     def run(self, psi0=['gM',0,0], t_length=1.2, n_steps=201):
         t, t_step = np.linspace(0, t_length, n_steps, retstep=True)
 
-        opts = Options(rhs_reuse=False, rhs_filename=self.compiled_hamiltonian.name)
+        # Clears the rhs memory, so that when we set rhs_reuse to true, it has nothing
+        # and so uses our compiled hamiltonian.  We do this as setting rhs_reuse=True
+        # prevents the .pyx files from being deleted after the first run.
+        rhs_clear()
+        opts = Options(rhs_reuse=True, rhs_filename=self.compiled_hamiltonian.name)
 
         psi0 = self.__ket(*psi0)
 
         if self.verbose:
             t_start = time.time()
             print("Running simulation with {0} timesteps".format(n_steps), end="...")
+        print('current config:', solver.config.tdfunc, solver.config.tdname)
+        solver.config.tdfunc = self.compiled_hamiltonian.tdfunc
+        solver.config.tdname = self.compiled_hamiltonian.tdname
+        print('current config:', solver.config.tdfunc, solver.config.tdname)
         output = mesolve(self.hams,
                          psi0,
                          t,

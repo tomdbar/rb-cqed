@@ -47,6 +47,10 @@ Other than standard libraries (numpy, matplotlib etc.) the IPython notebooks req
 
 For Mathematica, [87rb-d2-in-B-field.nb](mathematica/87rb-d2-in-B-field.nb) requires the [Atomic Density Matrix (ADM)](http://rochesterscientific.com/ADM/) package.
 
+#### Data Classes (Python 3.7.0)
+
+The [runners](runners), used in the [notebooks-bulk/xxx.iynb](notebooks-bulk), requires Data Classes, which was introduced in Python 3.7 under [PEP 557](https://www.python.org/dev/peps/pep-0557/) (although it can be backported into Python 3.6).
+
 #### Patch for QuTiP as of 05/09/2018
 
 _Please note, the below is my speculation, I don't pretend to know the QuTiP package in detail, but for what it is worth..._
