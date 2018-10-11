@@ -43,7 +43,7 @@ The notebooks in the [mathematica](mathematica) folder are not required to run t
 
 ## Requirements
 
-Other than standard libraries (numpy, matplotlib etc.) the IPython notebooks require the [QuTiP](http://qutip.org/) package.
+Other than standard libraries (numpy, matplotlib etc.) the IPython notebooks require the [QuTiP](http://qutip.org/) package.  The optimisation notebooks also use the [Pygmo](https://esa.github.io/pagmo2/index.html) package.
 
 For Mathematica, [87rb-d2-in-B-field.nb](mathematica/87rb-d2-in-B-field.nb) requires the [Atomic Density Matrix (ADM)](http://rochesterscientific.com/ADM/) package.
 
@@ -74,3 +74,10 @@ As of QuTiP 4.3.1 I believe there is an issue with the [rhs_generate](https://gi
        Lcoeff = ["1.0"]+Lcoeff
    ```
 If you have similar issues I suggest you try the above, or alternatively use the [rhs_generate.py](supplementary/rhs_generate.py) that is in the [supplementary](supplementary) folder, where I have already made the change.
+
+#### Updating openblas in Pygmo installation
+
+At least locally, I was unable to use import Pygmo after the default installation from conda-forge until I forced an update to openblas (using the below command).
+```
+conda update -c conda-forge openblas
+```

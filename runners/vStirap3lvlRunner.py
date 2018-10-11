@@ -9,6 +9,9 @@ from dataclasses import dataclass, field, Field, asdict
 from typing import Callable
 from qutip import *
 
+import os
+import sys
+
 np.set_printoptions(threshold=np.inf)
 
 # Global parameters
@@ -119,6 +122,7 @@ class LaserCoupling(RunnerDataClass):
     deltaL: float
     args_ham: dict
     pulse_shape: str = 'np.piecewise(t, [t<length_pulse], [np.sin((np.pi/length_pulse)*t)**2,0])'
+    setup_ham: list = field(default_factory=list)
 
     def _eq_ignore_fields(self):
         return ['omega0', 'deltaL', 'args_ham']
@@ -228,27 +232,32 @@ class ExperimentalRunner():
             if ham.can_use(self.atom, self.cavity, self.laser_couplings, self.cavity_couplings):
                 if self.verbose:
                     print("Pre-compiled Hamiltonian, {0}.pyx, is suitable to run this experiment.".format(ham.name))
+                self.__configure_c_ops(args_only=True)
+                self.__configure_laser_couplings(args_only=True)
+                self.__configure_cavity_couplings(args_only=True)
+                ham.atom=self.atom
+                ham.cavity=self.cavity
+                ham.laser_couplings = self.laser_couplings
+                ham.cavity_couplings = self.cavity_couplings
                 self.hams = ham.hams
                 self.c_op_list = ham.c_ops
-                self.__configure_c_ops(args_only=True)
-                self.__configure_laser_couplings(args_only=True)
-                self.__configure_cavity_couplings(args_only=True)
                 return ham
 
-            elif ham.can_modify(self.atom, self.cavity, self.laser_couplings, self.cavity_couplings):
-                if self.verbose:
-                    print("Pre-compiled Hamiltonian, {0}.pyx, can be modified to run this experiment.".
-                          format(ham.name), end='\n\t')
-                ham_new = self.__copy_and_modify_hamiltonian(ham)
-                self.hams = ham_new.hams
-                self.c_op_list = ham_new.c_ops
-                self.__configure_c_ops(args_only=True)
-                self.__configure_laser_couplings(args_only=True)
-                self.__configure_cavity_couplings(args_only=True)
-                compiled_hamiltonians.append(ham_new)
-                if self.verbose:
-                    print("{0}.pyx is a modified copy ready to run this experiment.".format(ham_new.name))
-                return ham_new
+        # for ham in compiled_hamiltonians:
+        #     if ham.can_modify(self.atom, self.cavity, self.laser_couplings, self.cavity_couplings):
+        #         if self.verbose:
+        #             print("Pre-compiled Hamiltonian, {0}.pyx, can be modified to run this experiment.".
+        #                   format(ham.name))
+        #         ham_new = self.__copy_and_modify_hamiltonian(ham)
+        #         self.hams = ham_new.hams
+        #         self.c_op_list = ham_new.c_ops
+        #         self.__configure_c_ops(args_only=True)
+        #         self.__configure_laser_couplings(args_only=True)
+        #         self.__configure_cavity_couplings(args_only=True)
+        #         compiled_hamiltonians.append(ham_new)
+        #         if self.verbose:
+        #             print("\t{0}.pyx is a modified copy ready to run this experiment.".format(ham_new.name))
+        #         return ham_new
 
         if self.verbose:
             print("No suitable pre-compiled Hamiltonian found.  Generating Cython file...", end='')
@@ -262,10 +271,25 @@ class ExperimentalRunner():
 
         self.hams = list(chain(*self.hams))
 
-
-        print(solver.config.tdfunc,solver.config.tdname)
-        rhs_generate(self.hams, self.c_op_list, args=self.args_hams, name=name, cleanup=False)
-        print(solver.config.tdfunc, solver.config.tdname)
+        try:
+            rhs_generate(self.hams, self.c_op_list, args=self.args_hams, name=name, cleanup=False)
+        except:
+            print("Exception in rhs comp...adding additional setups")
+            for laser_couping in self.laser_couplings:
+                if laser_couping.setup_ham != []:
+                    with fileinput.FileInput(name + '.pyx', inplace=True) as file:
+                        toWrite = True
+                        for line in file:
+                            if '#' not in line and toWrite:
+                                for input in laser_couping.setup_ham:
+                                    print(input, end='\n')
+                                toWrite = False
+                            print(line, end='')
+                        fileinput.close()
+            print("...and trying rhs generate again")
+            code = compile('from ' + name + ' import cy_td_ode_rhs', '<string>', 'exec')
+            exec(code, globals())
+            solver.config.tdfunc = cy_td_ode_rhs
 
         compiled_hamiltonian = CompiledHamiltonian(name=name,
                                                    hams=self.hams,
@@ -493,11 +517,9 @@ class ExperimentalRunner():
             hams_new = [[H, coeff.replace(old, new) if id and old in coeff else coeff]
                         for H, coeff in hams_new]
 
-        import cProfile
-
         if self.verbose:
             t_start = time.time()
-            print("\n\tCompiling new rhs function.",end='...')
+            print("\tCompiling new rhs function.",end='...')
         code = compile('from ' + name + ' import cy_td_ode_rhs', '<string>', 'exec')
         exec(code, globals())
         solver.config.tdfunc = cy_td_ode_rhs
@@ -528,10 +550,8 @@ class ExperimentalRunner():
         if self.verbose:
             t_start = time.time()
             print("Running simulation with {0} timesteps".format(n_steps), end="...")
-        print('current config:', solver.config.tdfunc, solver.config.tdname)
         solver.config.tdfunc = self.compiled_hamiltonian.tdfunc
         solver.config.tdname = self.compiled_hamiltonian.tdname
-        print('current config:', solver.config.tdfunc, solver.config.tdname)
         output = mesolve(self.hams,
                          psi0,
                          t,
@@ -580,7 +600,7 @@ class EmissionOperatorsFactory(metaclass=Singleton):
     def get(cls, atom, cavity, ketbras, verbose):
         for em_op in cls.emission_operators:
             if em_op._is_compatible(atom, cavity):
-                if verbose: print("Found suitable _EmissionOperators obj for setup.")
+                if verbose: print("\tFound suitable _EmissionOperators obj for setup.")
                 return em_op
         else:
             em_op = cls._EmissionOperators(atom,cavity,ketbras,verbose)
@@ -595,7 +615,7 @@ class EmissionOperatorsFactory(metaclass=Singleton):
             self.ketbras = ketbras
             self.verbose=verbose
 
-            if verbose: print("Creating new _EmissionOperators obj for setup.")
+            if verbose: print("\tCreating new _EmissionOperators obj for setup.")
 
             def kb(a, b):
                 return self.ketbras[str([a, b])]
@@ -613,12 +633,12 @@ class EmissionOperatorsFactory(metaclass=Singleton):
         def get(self, t_series, R_ZL):
             for t, R, kappa1, kappa2, deltaP, op_series in self.operator_series:
                 if all([np.array_equal(t,t_series),np.array_equal(R, R_ZL)]):
-                    if self.verbose: print("Found suitable pre-computed emission operator series.")
+                    if self.verbose: print("\tFound suitable pre-computed emission operator series.")
                     return op_series
             return self.__generate(t_series, R_ZL)
 
         def __generate(self, t_series, R_ZL):
-            if self.verbose: print("Creating new number operator series.")
+            if self.verbose: print("\tCreating new number operator series.")
             R_ZM = self.cavity.R_ML.getH() * R_ZL
 
             alpha_ZM, beta_ZM, phi1_ZM, phi2_ZM = R2args(R_ZM)
@@ -710,7 +730,7 @@ class NumberOperatorsFactory(metaclass=Singleton):
     def get(cls, atom, cavity, ketbras, verbose):
         for an_op in cls.number_operators:
             if an_op._is_compatible(atom, cavity):
-                if verbose: print("Found suitable _NumberOperators obj for setup.")
+                if verbose: print("\tFound suitable _NumberOperators obj for setup.")
                 return an_op
         else:
             an_op = cls._NumberOperators(atom, cavity, ketbras,verbose)
@@ -725,7 +745,7 @@ class NumberOperatorsFactory(metaclass=Singleton):
             self.ketbras = ketbras
             self.verbose = verbose
 
-            if verbose: print("Creating new _NumberOperators obj for setup.")
+            if verbose: print("\tCreating new _NumberOperators obj for setup.")
 
             def kb(a, b):
                 return self.ketbras[str([a, b])]
@@ -744,12 +764,12 @@ class NumberOperatorsFactory(metaclass=Singleton):
                 if all([np.array_equal(t,t_series),
                         np.array_equal(R, R_ZL),
                         deltaP==self.cavity.deltaP]):
-                    if self.verbose: print("Found suitable pre-computed number operator series.")
+                    if self.verbose: print("\tFound suitable pre-computed number operator series.")
                     return op_series
             return self.__generate(t_series, R_ZL)
 
         def __generate(self, t_series, R_ZL):
-            if self.verbose: print("Creating new number operator series.")
+            if self.verbose: print("\tCreating new number operator series.")
             R_ZC = self.cavity.R_CL.getH() * R_ZL
 
             alpha_ZC, beta_ZC, phi1_ZC, phi2_ZC = R2args(R_ZC)
@@ -786,7 +806,7 @@ class AtomicOperatorsFactory(metaclass=Singleton):
     def get(cls, atom, ketbras, verbose):
         for at_op in cls.atomic_operators:
             if at_op._is_compatible(atom):
-                if verbose: print("Found suitable _AtomicOperators obj for setup.")
+                if verbose: print("\tFound suitable _AtomicOperators obj for setup.")
                 return at_op
         else:
             at_op = cls._AtomicOperators(atom, ketbras, verbose)
@@ -800,7 +820,7 @@ class AtomicOperatorsFactory(metaclass=Singleton):
             self.ketbras = ketbras
             self.verbose = verbose
 
-            if verbose: print("Creating new _AtomicOperators obj for setup.")
+            if verbose: print("\tCreating new _AtomicOperators obj for setup.")
 
             def kb(a, b):
                 return self.ketbras[str([a, b])]
