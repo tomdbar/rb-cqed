@@ -334,17 +334,39 @@ class ExperimentalRunner():
             aM2X = np.conj(-np.exp(-i * phi2_MC) * beta_MC) * aX
             aM2Y = np.conj(np.exp(-i * phi1_MC) * alpha_MC) * aY
 
-            for kappa, aMX, aMY in zip([self.cavity.kappa1, self.cavity.kappa2], [aM1X, aM2X], [aM1Y, aM2Y]):
-                c_op_list.append(2 * kappa * lindblad_dissipator(aMX))
-                c_op_list.append(2 * kappa * lindblad_dissipator(aMY))
-                c_op_list.append([2 * kappa * (sprepost(aMY, aMX.dag())
-                                               - 0.5 * spost(aMX.dag() * aMY)
-                                               - 0.5 * spre(aMX.dag() * aMY)),
-                                  'exp(i*deltaP*t)'])
-                c_op_list.append([2 * kappa * (sprepost(aMX, aMY.dag())
-                                               - 0.5 * spost(aMY.dag() * aMX)
-                                               - 0.5 * spre(aMY.dag() * aMX)),
-                                  'exp(-i*deltaP*t)'])
+            '''
+            Deprecated TDB 16-08-18: Group collapse terms into fewest operators for speed.
+            '''
+            # for kappa, aMX, aMY in zip([self.cavity.kappa1, self.cavity.kappa2], [aM1X, aM2X], [aM1Y, aM2Y]):
+            #     c_op_list.append(2 * kappa * lindblad_dissipator(aMX))
+            #     c_op_list.append(2 * kappa * lindblad_dissipator(aMY))
+            #     c_op_list.append([2 * kappa * (sprepost(aMY, aMX.dag())
+            #                                    - 0.5 * spost(aMX.dag() * aMY)
+            #                                    - 0.5 * spre(aMX.dag() * aMY)),
+            #                       'exp(i*deltaP*t)'])
+            #     c_op_list.append([2 * kappa * (sprepost(aMX, aMY.dag())
+            #                                    - 0.5 * spost(aMY.dag() * aMX)
+            #                                    - 0.5 * spre(aMY.dag() * aMX)),
+            #                       'exp(-i*deltaP*t)'])
+
+            c_op_list.append(2 * self.cavity.kappa1 * lindblad_dissipator(aM1X) +
+                             2 * self.cavity.kappa1 * lindblad_dissipator(aM1Y) +
+                             2 * self.cavity.kappa2 * lindblad_dissipator(aM2X) +
+                             2 * self.cavity.kappa2 * lindblad_dissipator(aM2Y))
+            c_op_list.append([2 * self.cavity.kappa1 * (sprepost(aM1Y, aM1X.dag())
+                                                        - 0.5 * spost(aM1X.dag() * aM1Y)
+                                                        - 0.5 * spre(aM1X.dag() * aM1Y)) +
+                              2 * self.cavity.kappa2 * (sprepost(aM2Y, aM2X.dag())
+                                                        - 0.5 * spost(aM2X.dag() * aM2Y)
+                                                        - 0.5 * spre(aM2X.dag() * aM2Y)),
+                              'exp(i*deltaP*t)'])
+            c_op_list.append([2 * self.cavity.kappa1 * (sprepost(aM1X, aM1Y.dag())
+                                                        - 0.5 * spost(aM1Y.dag() * aM1X)
+                                                        - 0.5 * spre(aM1Y.dag() * aM1X)) +
+                              2 * self.cavity.kappa2 * (sprepost(aM2X, aM2Y.dag())
+                                                        - 0.5 * spost(aM2Y.dag() * aM2X)
+                                                        - 0.5 * spre(aM2Y.dag() * aM2X)),
+                              'exp(-i*deltaP*t)'])
 
             spontEmmChannels = self.atom.get_spontaneous_emission_channels()
 
