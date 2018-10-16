@@ -12,6 +12,9 @@ from qutip import *
 import os
 import sys
 
+import io
+from contextlib import redirect_stdout, redirect_stderr
+
 np.set_printoptions(threshold=np.inf)
 
 # Global parameters
@@ -261,7 +264,7 @@ class ExperimentalRunner():
         #         return ham_new
 
         if self.verbose:
-            print("No suitable pre-compiled Hamiltonian found.  Generating Cython file...", end='')
+            print("No suitable pre-compiled Hamiltonian found.  Generating Cython file...", end='\n')
             t_start = time.time()
 
         self.__configure_c_ops()
@@ -273,9 +276,11 @@ class ExperimentalRunner():
         self.hams = list(chain(*self.hams))
 
         try:
-            rhs_generate(self.hams, self.c_op_list, args=self.args_hams, name=name, cleanup=False)
+            with io.StringIO() as buf, redirect_stderr(buf):
+                rhs_generate(self.hams, self.c_op_list, args=self.args_hams, name=name, cleanup=False)
+                print('buf:\n', buf.getvalue())
         except:
-            print("Exception in rhs comp...adding additional setups")
+            print("\tException in rhs comp...adding additional setups...", end='')
             for laser_couping in self.laser_couplings:
                 if laser_couping.setup_pyx != [] or laser_couping.add_pyx != []:
                     with fileinput.FileInput(name + '.pyx', inplace=True) as file:
@@ -292,7 +297,7 @@ class ExperimentalRunner():
                                 toWrite_add = False
                             print(line, end='')
                         fileinput.close()
-            print("...and trying rhs generate again")
+            print("and trying rhs generate again...", end='')
             code = compile('from ' + name + ' import cy_td_ode_rhs', '<string>', 'exec')
             exec(code, globals())
             solver.config.tdfunc = cy_td_ode_rhs
