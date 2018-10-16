@@ -122,7 +122,8 @@ class LaserCoupling(RunnerDataClass):
     deltaL: float
     args_ham: dict
     pulse_shape: str = 'np.piecewise(t, [t<length_pulse], [np.sin((np.pi/length_pulse)*t)**2,0])'
-    setup_ham: list = field(default_factory=list)
+    setup_pyx: list = field(default_factory=list)
+    add_pyx: list = field(default_factory=list)
 
     def _eq_ignore_fields(self):
         return ['omega0', 'deltaL', 'args_ham']
@@ -276,14 +277,19 @@ class ExperimentalRunner():
         except:
             print("Exception in rhs comp...adding additional setups")
             for laser_couping in self.laser_couplings:
-                if laser_couping.setup_ham != []:
+                if laser_couping.setup_pyx != [] or laser_couping.add_pyx != []:
                     with fileinput.FileInput(name + '.pyx', inplace=True) as file:
-                        toWrite = True
+                        toWrite_setup = True
+                        toWrite_add = True
                         for line in file:
-                            if '#' not in line and toWrite:
-                                for input in laser_couping.setup_ham:
+                            if '#' not in line and toWrite_setup:
+                                for input in laser_couping.setup_pyx:
                                     print(input, end='\n')
-                                toWrite = False
+                                toWrite_setup = False
+                            if '@cython.cdivision(True)' in line and toWrite_add:
+                                for input in laser_couping.add_pyx:
+                                    print(input, end='\n')
+                                toWrite_add = False
                             print(line, end='')
                         fileinput.close()
             print("...and trying rhs generate again")
@@ -334,11 +340,11 @@ class ExperimentalRunner():
                 c_op_list.append([2 * kappa * (sprepost(aMY, aMX.dag())
                                                - 0.5 * spost(aMX.dag() * aMY)
                                                - 0.5 * spre(aMX.dag() * aMY)),
-                                  'np.exp(i*deltaP*t)'])
+                                  'exp(i*deltaP*t)'])
                 c_op_list.append([2 * kappa * (sprepost(aMX, aMY.dag())
                                                - 0.5 * spost(aMY.dag() * aMX)
                                                - 0.5 * spre(aMY.dag() * aMX)),
-                                  'np.exp(-i*deltaP*t)'])
+                                  'exp(-i*deltaP*t)'])
 
             spontEmmChannels = self.atom.get_spontaneous_emission_channels()
 
@@ -386,13 +392,13 @@ class ExperimentalRunner():
                              kb([g, 1, 0], [x, 1, 0]) + kb([g, 1, 1], [x, 1, 1])) +
                             (kb([x, 0, 0], [g, 0, 0]) + kb([x, 0, 1], [g, 0, 1]) +
                              kb([x, 1, 0], [g, 1, 0]) + kb([x, 1, 1], [g, 1, 1]))
-                    ), '{0} * {1} * np.cos({2}*t)'.format(Omega_lab, pulse_shape, omegaL_lab)],
+                    ), '{0} * {1} * cos({2}*t)'.format(Omega_lab, pulse_shape, omegaL_lab)],
                     [i * (1 / 2) * (
                             (kb([x, 0, 0], [g, 0, 0]) + kb([x, 0, 1], [g, 0, 1]) +
                              kb([x, 1, 0], [g, 1, 0]) + kb([x, 1, 1], [g, 1, 1])) -
                             (kb([g, 0, 0], [x, 0, 0]) - kb([g, 0, 1], [x, 0, 1]) -
                              kb([g, 1, 0], [x, 1, 0]) - kb([g, 1, 1], [x, 1, 1]))
-                    ), '{0} * {1} * np.sin({2}*t)'.format(Omega_lab, pulse_shape, omegaL_lab)]
+                    ), '{0} * {1} * sin({2}*t)'.format(Omega_lab, pulse_shape, omegaL_lab)]
                 ])
 
     def __configure_cavity_couplings(self, args_only=False):
@@ -441,22 +447,22 @@ class ExperimentalRunner():
                         [-1 * alpha_AC * (
                                 kb([g, 1, 0], [x, 0, 0]) + kb([g, 1, 1], [x, 0, 1]) +
                                 kb([x, 0, 0], [g, 1, 0]) + kb([x, 0, 1], [g, 1, 1])
-                        ), '{0} * np.cos({1}*t + phi1_AC)'.format(g0_lab, omegaC_X_lab)],
+                        ), '{0} * cos({1}*t + phi1_AC)'.format(g0_lab, omegaC_X_lab)],
 
                         [-i * 1 * alpha_AC * (
                                 kb([g, 1, 0], [x, 0, 0]) + kb([g, 1, 1], [x, 0, 1]) -
                                 kb([x, 0, 0], [g, 1, 0]) - kb([x, 0, 1], [g, 1, 1])
-                        ), '{0} * np.sin({1}*t + phi1_AC)'.format(g0_lab ,omegaC_X_lab)],
+                        ), '{0} * sin({1}*t + phi1_AC)'.format(g0_lab ,omegaC_X_lab)],
 
                         [-1 * beta_AC * (
                                 kb([g, 0, 1], [x, 0, 0]) + kb([g, 1, 1], [x, 1, 0]) +
                                 kb([x, 0, 0], [g, 0, 1]) + kb([x, 1, 0], [g, 1, 1])
-                        ), '{0} * np.cos({1}*t + phi2_AC)'.format(g0_lab ,omegaC_Y_lab)],
+                        ), '{0} * cos({1}*t + phi2_AC)'.format(g0_lab ,omegaC_Y_lab)],
 
                         [-i * 1 * beta_AC * (
                                 kb([g, 0, 1], [x, 0, 0]) + kb([g, 1, 1], [x, 1, 0]) -
                                 kb([x, 0, 0], [g, 0, 1]) - kb([x, 1, 0], [g, 1, 1])
-                        ), '{0} * np.sin({1}*t + phi2_AC)'.format(g0_lab, omegaC_Y_lab)]
+                        ), '{0} * sin({1}*t + phi2_AC)'.format(g0_lab, omegaC_Y_lab)]
                     ]
 
                 elif deltaM == -1:
@@ -464,22 +470,22 @@ class ExperimentalRunner():
                         [-1 *  alpha_AC * (
                                 kb([g, 0, 1], [x, 0, 0]) + kb([g, 1, 1], [x, 1, 0]) +
                                 kb([x, 0, 0], [g, 0, 1]) + kb([x, 1, 0], [g, 1, 1])
-                        ), '{0} * np.cos({1}*t - phi1_AC)'.format(g0_lab, omegaC_Y_lab)],
+                        ), '{0} * cos({1}*t - phi1_AC)'.format(g0_lab, omegaC_Y_lab)],
 
                         [-i * 1 * alpha_AC * (
                                 kb([g, 0, 1], [x, 0, 0]) + kb([g, 1, 1], [x, 1, 0]) -
                                 kb([x, 0, 0], [g, 0, 1]) - kb([x, 1, 0], [g, 1, 1])
-                        ), '{0} * np.sin({1}*t - phi1_AC)'.format(g0_lab, omegaC_Y_lab)],
+                        ), '{0} * sin({1}*t - phi1_AC)'.format(g0_lab, omegaC_Y_lab)],
 
                         [1 *  beta_AC * (
                                 kb([g, 1, 0], [x, 0, 0]) + kb([g, 1, 1], [x, 0, 1]) +
                                 kb([x, 0, 0], [g, 1, 0]) + kb([x, 0, 1], [g, 1, 1])
-                        ), '{0} * np.cos({1}*t - phi2_AC)'.format(g0_lab, omegaC_X_lab)],
+                        ), '{0} * cos({1}*t - phi2_AC)'.format(g0_lab, omegaC_X_lab)],
 
                         [i * 1 * beta_AC * (
                                 kb([g, 1, 0], [x, 0, 0]) + kb([g, 1, 1], [x, 0, 1]) -
                                 kb([x, 0, 0], [g, 1, 0]) - kb([x, 0, 1], [g, 1, 1])
-                        ), '{0} * np.sin({1}*t - phi2_AC)'.format(g0_lab, omegaC_X_lab)]
+                        ), '{0} * sin({1}*t - phi2_AC)'.format(g0_lab, omegaC_X_lab)]
                     ]
 
                 else:
