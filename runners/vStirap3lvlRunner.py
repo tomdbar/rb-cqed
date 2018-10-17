@@ -264,7 +264,7 @@ class ExperimentalRunner():
         #         return ham_new
 
         if self.verbose:
-            print("No suitable pre-compiled Hamiltonian found.  Generating Cython file...", end='\n')
+            print("No suitable pre-compiled Hamiltonian found.  Generating Cython file...", end='')
             t_start = time.time()
 
         self.__configure_c_ops()
@@ -278,9 +278,10 @@ class ExperimentalRunner():
         try:
             with io.StringIO() as buf, redirect_stderr(buf):
                 rhs_generate(self.hams, self.c_op_list, args=self.args_hams, name=name, cleanup=False)
-                print('buf:\n', buf.getvalue())
+                # print('buf:\n', buf.getvalue())
         except:
-            print("\tException in rhs comp...adding additional setups...", end='')
+            if self.verbose:
+                print("\n\tException in rhs comp...adding additional setups...", end='')
             for laser_couping in self.laser_couplings:
                 if laser_couping.setup_pyx != [] or laser_couping.add_pyx != []:
                     with fileinput.FileInput(name + '.pyx', inplace=True) as file:
@@ -297,7 +298,8 @@ class ExperimentalRunner():
                                 toWrite_add = False
                             print(line, end='')
                         fileinput.close()
-            print("and trying rhs generate again...", end='')
+            if self.verbose:
+                print("and trying rhs generate again...", end='')
             code = compile('from ' + name + ' import cy_td_ode_rhs', '<string>', 'exec')
             exec(code, globals())
             solver.config.tdfunc = cy_td_ode_rhs
@@ -878,7 +880,7 @@ class AtomicOperatorsFactory(metaclass=Singleton):
             self.sp_op = sum([x.dag() * x for x in spont_decay_ops])
 
         def get_at_op(self, states=[]):
-            if type(states)!=list:
+            if type(states)!= list:
                 states = [states]
             if not states:
                 return list(self.at_ops.values())
@@ -918,34 +920,45 @@ class ExperimentalResults():
                                                            self.ketbras,
                                                            self.verbose)
 
-    def get_cavity_emission(self, R_ZL):
+    def get_cavity_emission(self, R_ZL, i_output=[]):
         if type(R_ZL)!=np.matrix:
             raise ValueError("R_ZL must be a numpy matrix.")
         emP_t, emM_t = self.emission_operators.get(self.output.times, R_ZL)
 
         emP, emM = np.abs(np.array(
-            [expect(list(an_list), state) for an_list, state in zip(zip(emP_t, emM_t), self.output.states)]
+            [expect(list(an_list), state) for an_list, state in zip(zip(emP_t, emM_t), self.__get_output_states(i_output))]
         )).T
 
         return emP, emM
 
         return list(zip(*[iter(ems)] * 2))
 
-    def get_cavity_number(self, R_ZL):
+    def get_cavity_number(self, R_ZL, i_output=[]):
         if type(R_ZL)!=np.matrix:
             raise ValueError("R_ZL must be a numpy matrix.")
         anP_t, anM_t = self.number_operators.get(self.output.times, R_ZL)
 
         anP, anM = np.abs(np.array(
-            [expect(list(an_list), state) for an_list, state in zip(zip(anP_t, anM_t), self.output.states)]
+            [expect(list(an_list), state) for an_list, state in zip(zip(anP_t, anM_t), self.__get_output_states(i_output))]
         )).T
 
         return anP, anM
 
-    def get_atomic_population(self, states=[]):
+    def get_atomic_population(self, states=[], i_output=[]):
         at_ops = self.atomic_operators.get_at_op(states)
-        return np.abs(expect(at_ops, self.output.states))
+        return np.abs(expect(at_ops, self.__get_output_states(i_output)))
 
-    def get_total_spontaneous_emission(self):
+    def get_total_spontaneous_emission(self, i_output=[]):
         sp_op = self.atomic_operators.get_sp_op()
-        return expect(sp_op, self.output.states)
+        return expect(sp_op, self.__get_output_states(i_output))
+
+    def __get_output_states(self,i_output):
+        if not i_output:
+            out_states = self.output.states
+        elif type(i_output)==int:
+            out_states = self.output.states[i_output]
+        elif len(i_output)==2:
+            out_states = self.output.states[i_output[0]:i_output[1]]
+        else:
+            raise TypeError('i_output must be [], an integer, or a list/tuple of length 2')
+        return out_states
