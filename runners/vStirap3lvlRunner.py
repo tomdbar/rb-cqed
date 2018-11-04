@@ -8,6 +8,7 @@ from itertools import chain, product
 from dataclasses import dataclass, field, Field, asdict
 from typing import Callable
 from qutip import *
+import multiprocessing
 
 import os
 import sys
@@ -20,7 +21,6 @@ np.set_printoptions(threshold=np.inf)
 # Global parameters
 d = 3.584*10**(-29)
 i = np.complex(0,1)
-compiled_hamiltonians = []
 
 def R2args(R):
     alpha = np.clip(np.abs(R[0, 0]), 0, 1)
@@ -166,6 +166,11 @@ class CompiledHamiltonian:
                 can_use = False
         return can_use
 
+    '''
+    Likely to be deleted.  Though 'modifiable' Hamiltonians can readily have the .pyx file updated for a new pulse
+    shape, the majority of the time in creating a new compiled Hamiltonian is in the compilation itself, and so
+    this is not particularly quicker.
+    '''
     def can_modify(self, atom, cavity, laser_couplings, cavity_couplings):
         can_modify = True
         if self.atom != atom:
@@ -184,6 +189,7 @@ class CompiledHamiltonian:
                 can_modify = False
         return can_modify
 
+
 class ExperimentalRunner():
 
     def __init__(self,
@@ -191,7 +197,8 @@ class ExperimentalRunner():
                  cavity=Cavity(),
                  laser_couplings = [],
                  cavity_couplings = [],
-                 verbose = False):
+                 verbose = False,
+                 compiled_hamiltonian_pipe=None):
         self.atom = atom
         self.cavity = cavity
         self.laser_couplings = laser_couplings if type(laser_couplings)==list else [laser_couplings]
@@ -204,6 +211,7 @@ class ExperimentalRunner():
 
         self.ketbras = self.__configure_ketbras()
 
+        self.compiled_hamiltonian_pipe= CompiledHamiltonianPipe() if not compiled_hamiltonian_pipe else compiled_hamiltonian_pipe
         self.compiled_hamiltonian = self.__generate_hamiltonian()
 
     def __ket(self, atom_state, cav_X, cav_Y):
@@ -232,20 +240,21 @@ class ExperimentalRunner():
 
     def __generate_hamiltonian(self):
 
-        for ham in compiled_hamiltonians:
-            if ham.can_use(self.atom, self.cavity, self.laser_couplings, self.cavity_couplings):
-                if self.verbose:
-                    print("Pre-compiled Hamiltonian, {0}.pyx, is suitable to run this experiment.".format(ham.name))
-                self.__configure_c_ops(args_only=True)
-                self.__configure_laser_couplings(args_only=True)
-                self.__configure_cavity_couplings(args_only=True)
-                ham.atom=self.atom
-                ham.cavity=self.cavity
-                ham.laser_couplings = self.laser_couplings
-                ham.cavity_couplings = self.cavity_couplings
-                self.hams = ham.hams
-                self.c_op_list = ham.c_ops
-                return ham
+        try:
+            compiled_hamiltonian = self.compiled_hamiltonian_pipe.fetch(self.atom, self.cavity, self.laser_couplings, self.cavity_couplings)
+            if self.verbose:
+                print("Pre-compiled Hamiltonian, {0}.pyx, is suitable to run this experiment.".format(compiled_hamiltonian.name))
+            self.__configure_c_ops(args_only=True)
+            self.__configure_laser_couplings(args_only=True)
+            self.__configure_cavity_couplings(args_only=True)
+            compiled_hamiltonian.atom = self.atom
+            compiled_hamiltonian.cavity = self.cavity
+            compiled_hamiltonian.laser_couplings = self.laser_couplings
+            compiled_hamiltonian.cavity_couplings = self.cavity_couplings
+            self.hams = compiled_hamiltonian.hams
+            self.c_op_list = compiled_hamiltonian.c_ops
+
+        except MissingItemError:
 
         # for ham in compiled_hamiltonians:
         #     if ham.can_modify(self.atom, self.cavity, self.laser_couplings, self.cavity_couplings):
@@ -263,62 +272,70 @@ class ExperimentalRunner():
         #             print("\t{0}.pyx is a modified copy ready to run this experiment.".format(ham_new.name))
         #         return ham_new
 
-        if self.verbose:
-            print("No suitable pre-compiled Hamiltonian found.  Generating Cython file...", end='')
-            t_start = time.time()
-
-        self.__configure_c_ops()
-        self.__configure_laser_couplings()
-        self.__configure_cavity_couplings()
-
-        name = 'ExperimentalRunner_Hamiltonian_{0}'.format(len(compiled_hamiltonians))
-
-        self.hams = list(chain(*self.hams))
-
-        try:
-            with io.StringIO() as buf, redirect_stderr(buf):
-                rhs_generate(self.hams, self.c_op_list, args=self.args_hams, name=name, cleanup=False)
-                # print('buf:\n', buf.getvalue())
-        except:
             if self.verbose:
-                print("\n\tException in rhs comp...adding additional setups...", end='')
-            for laser_couping in self.laser_couplings:
-                if laser_couping.setup_pyx != [] or laser_couping.add_pyx != []:
-                    with fileinput.FileInput(name + '.pyx', inplace=True) as file:
-                        toWrite_setup = True
-                        toWrite_add = True
-                        for line in file:
-                            if '#' not in line and toWrite_setup:
-                                for input in laser_couping.setup_pyx:
-                                    print(input, end='\n')
-                                toWrite_setup = False
-                            if '@cython.cdivision(True)' in line and toWrite_add:
-                                for input in laser_couping.add_pyx:
-                                    print(input, end='\n')
-                                toWrite_add = False
-                            print(line, end='')
-                        fileinput.close()
+                print("No suitable pre-compiled Hamiltonian found.  Generating Cython file...", end='')
+                t_start = time.time()
+
+            self.__configure_c_ops()
+            self.__configure_laser_couplings()
+            self.__configure_cavity_couplings()
+
+            # CompiledHamiltonianWarehouse()._lock.acquire()
+
+            name = 'ExperimentalRunner_Hamiltonian_{0}_{1}'.format(len(self.compiled_hamiltonian_pipe.get_all()), os.getpid())
+
+            self.hams = list(chain(*self.hams))
+
+            try:
+                if self.verbose:
+                    rhs_generate(self.hams, self.c_op_list, args=self.args_hams, name=name, cleanup=False)
+                else:
+                    with io.StringIO() as buf, redirect_stderr(buf):
+                        rhs_generate(self.hams, self.c_op_list, args=self.args_hams, name=name, cleanup=False)  #
+            except:
+                if self.verbose:
+                    print("\n\tException in rhs comp...adding additional setups...", end='')
+                    # print('buf:\n', buf.getvalue())
+                for laser_couping in self.laser_couplings:
+                    if laser_couping.setup_pyx != [] or laser_couping.add_pyx != []:
+                        with fileinput.FileInput(name + '.pyx', inplace=True) as file:
+                            toWrite_setup = True
+                            toWrite_add = True
+                            for line in file:
+                                if '#' not in line and toWrite_setup:
+                                    for input in laser_couping.setup_pyx:
+                                        print(input, end='\n')
+                                    toWrite_setup = False
+                                if '@cython.cdivision(True)' in line and toWrite_add:
+                                    for input in laser_couping.add_pyx:
+                                        print(input, end='\n')
+                                    toWrite_add = False
+                                print(line, end='')
+                            fileinput.close()
+                if self.verbose:
+                    print("and trying rhs generate again...", end='')
+                code = compile('from ' + name + ' import cy_td_ode_rhs', '<string>', 'exec')
+                exec(code, globals())
+                solver.config.tdfunc = cy_td_ode_rhs
+
+            compiled_hamiltonian = CompiledHamiltonian(name=name,
+                                                       hams=self.hams,
+                                                       atom=self.atom,
+                                                       cavity=self.cavity,
+                                                       laser_couplings=self.laser_couplings,
+                                                       cavity_couplings=self.cavity_couplings,
+                                                       c_ops=self.c_op_list,
+                                                       tdname=solver.config.tdname,
+                                                       tdfunc=solver.config.tdfunc)
+
+            self.compiled_hamiltonian_pipe.put(compiled_hamiltonian)
+
+            # CompiledHamiltonianWarehouse()._lock.release()
+
             if self.verbose:
-                print("and trying rhs generate again...", end='')
-            code = compile('from ' + name + ' import cy_td_ode_rhs', '<string>', 'exec')
-            exec(code, globals())
-            solver.config.tdfunc = cy_td_ode_rhs
+                print("done.\n\tNew file is {0}.pyx.  Generated in {1} seconds.".format(name,
+                                                                                        np.round(time.time() - t_start, 3)))
 
-        compiled_hamiltonian = CompiledHamiltonian(name=name,
-                                                   hams=self.hams,
-                                                   atom=self.atom,
-                                                   cavity=self.cavity,
-                                                   laser_couplings=self.laser_couplings,
-                                                   cavity_couplings=self.cavity_couplings,
-                                                   c_ops=self.c_op_list,
-                                                   tdname=solver.config.tdname,
-                                                   tdfunc=solver.config.tdfunc)
-
-        compiled_hamiltonians.append(compiled_hamiltonian)
-
-        if self.verbose:
-            print("done.\n\tNew file is {0}.pyx.  Generated in {1} seconds.".format(name,
-                                                                                    np.round(time.time()-t_start,3)))
 
         return compiled_hamiltonian
 
@@ -522,54 +539,54 @@ class ExperimentalRunner():
 
                 self.hams.append(H_coupling)
 
-    def __copy_and_modify_hamiltonian(self, ham):
-        '''
-        Copies and modifies a pre-compiled Hamiltonian to suit the current experimental set-up
-        :param hamiltonian:
-        :return:
-        '''
-        name = 'ExperimentalRunner_Hamiltonian_{0}'.format(len(compiled_hamiltonians))
-
-        copyfile(ham.name + '.pyx', name +  '.pyx')
-
-        old_pulses = [x.pulse_shape for x in ham.laser_couplings]
-        new_pulses = [x.pulse_shape for x in self.laser_couplings]
-
-        with fileinput.FileInput(name +  '.pyx', inplace=True) as file:
-            for line in file:
-                if 'spmvpy' in line:
-                    for old, new in zip(old_pulses,new_pulses):
-                        print(line.replace(old, new), end='')
-                else:
-                    print(line, end='')
-        fileinput.close()
-
-        hams_new = ham.hams
-        for old_coupling, new_coupling in zip(ham.laser_couplings, self.laser_couplings):
-            id = '{0}{1}'.format(new_coupling.g, new_coupling.x)
-            old = old_coupling.pulse_shape
-            new = new_coupling.pulse_shape
-            hams_new = [[H, coeff.replace(old, new) if id and old in coeff else coeff]
-                        for H, coeff in hams_new]
-
-        if self.verbose:
-            t_start = time.time()
-            print("\tCompiling new rhs function.",end='...')
-        code = compile('from ' + name + ' import cy_td_ode_rhs', '<string>', 'exec')
-        exec(code, globals())
-        solver.config.tdfunc = cy_td_ode_rhs
-        if self.verbose:
-            print("done in {0} seconds".format(np.round(time.time() - t_start, 3)))
-
-        return CompiledHamiltonian(name=name,
-                                  hams=hams_new,
-                                  atom=ham.atom,
-                                  cavity=ham.cavity,
-                                  laser_couplings=self.laser_couplings,
-                                  cavity_couplings=ham.cavity_couplings,
-                                  c_ops=ham.c_ops,
-                                  tdname=name,
-                                  tdfunc=cy_td_ode_rhs)
+    # def __copy_and_modify_hamiltonian(self, ham):
+    #     '''
+    #     Copies and modifies a pre-compiled Hamiltonian to suit the current experimental set-up
+    #     :param hamiltonian:
+    #     :return:
+    #     '''
+    #     name = 'ExperimentalRunner_Hamiltonian_{0}'.format(len(compiled_hamiltonians))
+    #
+    #     copyfile(ham.name + '.pyx', name +  '.pyx')
+    #
+    #     old_pulses = [x.pulse_shape for x in ham.laser_couplings]
+    #     new_pulses = [x.pulse_shape for x in self.laser_couplings]
+    #
+    #     with fileinput.FileInput(name +  '.pyx', inplace=True) as file:
+    #         for line in file:
+    #             if 'spmvpy' in line:
+    #                 for old, new in zip(old_pulses,new_pulses):
+    #                     print(line.replace(old, new), end='')
+    #             else:
+    #                 print(line, end='')
+    #     fileinput.close()
+    #
+    #     hams_new = ham.hams
+    #     for old_coupling, new_coupling in zip(ham.laser_couplings, self.laser_couplings):
+    #         id = '{0}{1}'.format(new_coupling.g, new_coupling.x)
+    #         old = old_coupling.pulse_shape
+    #         new = new_coupling.pulse_shape
+    #         hams_new = [[H, coeff.replace(old, new) if id and old in coeff else coeff]
+    #                     for H, coeff in hams_new]
+    #
+    #     if self.verbose:
+    #         t_start = time.time()
+    #         print("\tCompiling new rhs function.",end='...')
+    #     code = compile('from ' + name + ' import cy_td_ode_rhs', '<string>', 'exec')
+    #     exec(code, globals())
+    #     solver.config.tdfunc = cy_td_ode_rhs
+    #     if self.verbose:
+    #         print("done in {0} seconds".format(np.round(time.time() - t_start, 3)))
+    #
+    #     return CompiledHamiltonian(name=name,
+    #                               hams=hams_new,
+    #                               atom=ham.atom,
+    #                               cavity=ham.cavity,
+    #                               laser_couplings=self.laser_couplings,
+    #                               cavity_couplings=ham.cavity_couplings,
+    #                               c_ops=ham.c_ops,
+    #                               tdname=name,
+    #                               tdfunc=cy_td_ode_rhs)
 
     def run(self, psi0=['gM',0,0], t_length=1.2, n_steps=201):
         t, t_step = np.linspace(0, t_length, n_steps, retstep=True)
@@ -603,6 +620,72 @@ class ExperimentalRunner():
                                    self.ketbras,
                                    self.verbose)
 
+
+class ExperimentalResults():
+
+    def __init__(self, output, hamiltonian, args, ketbras, verbose=False):
+        self.output = output
+        self.hamiltonian = hamiltonian
+        self.args = args
+        self.ketbras = ketbras
+        self.verbose = verbose
+
+        self.emission_operators = EmissionOperatorsFactory.get(hamiltonian.atom,
+                                                               hamiltonian.cavity,
+                                                               self.ketbras,
+                                                               self.verbose)
+        self.number_operators = NumberOperatorsFactory.get(hamiltonian.atom,
+                                                           hamiltonian.cavity,
+                                                           self.ketbras,
+                                                           self.verbose)
+        self.atomic_operators = AtomicOperatorsFactory.get(hamiltonian.atom,
+                                                           self.ketbras,
+                                                           self.verbose)
+
+    def get_cavity_emission(self, R_ZL, i_output=[]):
+        if type(R_ZL)!=np.matrix:
+            raise ValueError("R_ZL must be a numpy matrix.")
+        emP_t, emM_t = self.emission_operators.get(self.output.times, R_ZL)
+
+        emP, emM = np.abs(np.array(
+            [expect(list(an_list), state) for an_list, state in zip(zip(emP_t, emM_t), self.__get_output_states(i_output))]
+        )).T
+
+        return emP, emM
+
+        return list(zip(*[iter(ems)] * 2))
+
+    def get_cavity_number(self, R_ZL, i_output=[]):
+        if type(R_ZL)!=np.matrix:
+            raise ValueError("R_ZL must be a numpy matrix.")
+        anP_t, anM_t = self.number_operators.get(self.output.times, R_ZL)
+
+        anP, anM = np.abs(np.array(
+            [expect(list(an_list), state) for an_list, state in zip(zip(anP_t, anM_t), self.__get_output_states(i_output))]
+        )).T
+
+        return anP, anM
+
+    def get_atomic_population(self, states=[], i_output=[]):
+        at_ops = self.atomic_operators.get_at_op(states)
+        return np.abs(expect(at_ops, self.__get_output_states(i_output)))
+
+    def get_total_spontaneous_emission(self, i_output=[]):
+        sp_op = self.atomic_operators.get_sp_op()
+        return expect(sp_op, self.__get_output_states(i_output))
+
+    def __get_output_states(self,i_output):
+        if not i_output:
+            out_states = self.output.states
+        elif type(i_output)==int:
+            out_states = self.output.states[i_output]
+        elif len(i_output)==2:
+            out_states = self.output.states[i_output[0]:i_output[1]]
+        else:
+            raise TypeError('i_output must be [], an integer, or a list/tuple of length 2')
+        return out_states
+
+
 '''
 This is just some notes on the below.  Essentially I want to minimise re-computiation of the operators I track through
 the simulations (practically these are lists of matrices at each time step).  To do this I define a class that takes
@@ -623,6 +706,7 @@ if a suitable one is found, otherwise it creates a new _xxxOperators instance an
 class Singleton(type):
     _instances = {}
     def __call__(cls, *args, **kwargs):
+        print('Singleton.__call__, PID:', os.getpid()),
         if cls not in cls._instances:
             cls._instances[cls] = super(Singleton, cls).__call__(*args, **kwargs)
         return cls._instances[cls]
@@ -899,66 +983,40 @@ class AtomicOperatorsFactory(metaclass=Singleton):
             else:
                 return False
 
-class ExperimentalResults():
 
-    def __init__(self, output, hamiltonian, args, ketbras, verbose=False):
-        self.output = output
-        self.hamiltonian = hamiltonian
-        self.args = args
-        self.ketbras = ketbras
-        self.verbose = verbose
+# __compiled_hamiltonians = []
 
-        self.emission_operators = EmissionOperatorsFactory.get(hamiltonian.atom,
-                                                               hamiltonian.cavity,
-                                                               self.ketbras,
-                                                               self.verbose)
-        self.number_operators = NumberOperatorsFactory.get(hamiltonian.atom,
-                                                           hamiltonian.cavity,
-                                                           self.ketbras,
-                                                           self.verbose)
-        self.atomic_operators = AtomicOperatorsFactory.get(hamiltonian.atom,
-                                                           self.ketbras,
-                                                           self.verbose)
+class CompiledHamiltonianPipe(metaclass=Singleton):
 
-    def get_cavity_emission(self, R_ZL, i_output=[]):
-        if type(R_ZL)!=np.matrix:
-            raise ValueError("R_ZL must be a numpy matrix.")
-        emP_t, emM_t = self.emission_operators.get(self.output.times, R_ZL)
+    __compiled_hamiltonians = []
 
-        emP, emM = np.abs(np.array(
-            [expect(list(an_list), state) for an_list, state in zip(zip(emP_t, emM_t), self.__get_output_states(i_output))]
-        )).T
+    @classmethod
+    def put(cls, args):
+        # print('put', os.getpid())
+        # global __compiled_hamiltonians
+        cls.__compiled_hamiltonians.append(args)
 
-        return emP, emM
+    @classmethod
+    def get_all(cls):
+        # print('get_all', os.getpid())
+        # global __compiled_hamiltonians
+        return cls.__compiled_hamiltonians
 
-        return list(zip(*[iter(ems)] * 2))
+    @classmethod
+    def fetch(cls, atom, cavity, laser_couplings, cavity_couplings):
+        # global __compiled_hamiltonians
+        for c_ham in cls.__compiled_hamiltonians:
+            if c_ham.can_use(atom, cavity, laser_couplings, cavity_couplings):
+                return c_ham
+        raise (MissingItemError())
 
-    def get_cavity_number(self, R_ZL, i_output=[]):
-        if type(R_ZL)!=np.matrix:
-            raise ValueError("R_ZL must be a numpy matrix.")
-        anP_t, anM_t = self.number_operators.get(self.output.times, R_ZL)
+    @classmethod
+    def clear(cls):
+        # global __compiled_hamiltonians
+        cls.__compiled_hamiltonians = []
 
-        anP, anM = np.abs(np.array(
-            [expect(list(an_list), state) for an_list, state in zip(zip(anP_t, anM_t), self.__get_output_states(i_output))]
-        )).T
+class MissingItemError(Exception):
+    def __init__(self, message='Sutiable compiled Hamiltonian not found.', errors=[]):
+        # Call the base class constructor with the parameters it needs
+        super().__init__(message)
 
-        return anP, anM
-
-    def get_atomic_population(self, states=[], i_output=[]):
-        at_ops = self.atomic_operators.get_at_op(states)
-        return np.abs(expect(at_ops, self.__get_output_states(i_output)))
-
-    def get_total_spontaneous_emission(self, i_output=[]):
-        sp_op = self.atomic_operators.get_sp_op()
-        return expect(sp_op, self.__get_output_states(i_output))
-
-    def __get_output_states(self,i_output):
-        if not i_output:
-            out_states = self.output.states
-        elif type(i_output)==int:
-            out_states = self.output.states[i_output]
-        elif len(i_output)==2:
-            out_states = self.output.states[i_output[0]:i_output[1]]
-        else:
-            raise TypeError('i_output must be [], an integer, or a list/tuple of length 2')
-        return out_states
