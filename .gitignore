@@ -1,3 +1,5 @@
 *.pyx
 data/
+notebooks-bulk/vStirap-3lvl-bulk.ipynb
+runners/vStirapRunner.py
 .idea
