@@ -1,17 +1,12 @@
 import numpy as np
-import matplotlib.pyplot as plt
 import copy
-from shutil import copyfile
 import fileinput
 import time
 from itertools import chain, product
-from dataclasses import dataclass, field, Field, asdict
-from typing import Callable
+from dataclasses import dataclass, field, asdict
 from qutip import *
-import multiprocessing
 
 import os
-import sys
 
 import io
 from contextlib import redirect_stdout, redirect_stderr
@@ -142,453 +137,24 @@ class CavityCoupling(RunnerDataClass):
     def _eq_ignore_fields(self):
         return ['g0','deltaC']
 
-@dataclass
-class CompiledHamiltonian:
-    name: str
-    hams: list
-    atom: Atom
-    cavity: Cavity
-    laser_couplings: list
-    cavity_couplings: list
-    c_ops: list
-    tdname: str
-    tdfunc: Callable
-
-    def can_use(self, atom, cavity, laser_couplings, cavity_couplings):
-        can_use = True
-        if self.atom != atom:
-            can_use = False
-        if self.cavity != cavity:
-            can_use = False
-        for x,y in list(zip(self.laser_couplings, laser_couplings)) + \
-                   list(zip(self.cavity_couplings, cavity_couplings)):
-            if x != y:
-                can_use = False
-        return can_use
-
-    '''
-    Likely to be deleted.  Though 'modifiable' Hamiltonians can readily have the .pyx file updated for a new pulse
-    shape, the majority of the time in creating a new compiled Hamiltonian is in the compilation itself, and so
-    this is not particularly quicker.
-    '''
-    def can_modify(self, atom, cavity, laser_couplings, cavity_couplings):
-        can_modify = True
-        if self.atom != atom:
-            can_modify = False
-        if self.cavity != cavity:
-            can_modify = False
-        for x, y in list(zip(self.cavity_couplings, cavity_couplings)):
-            if x != y:
-                can_modify = False
-        for x, y in list(zip(self.laser_couplings, laser_couplings)):
-            cx,cy = copy.copy(x),  copy.copy(y)
-            cx.pulse_shape = ''; cy.pulse_shape = ''
-            if cx != cy:
-                # If the only difference between the laser couplings is the pulse shape, we can
-                # modify the compiled .pyx file to fix this, without re-compiling it.
-                can_modify = False
-        return can_modify
-
-
 class ExperimentalRunner():
 
     def __init__(self,
-                 atom=Atom(),
-                 cavity=Cavity(),
+                 atom = Atom(),
+                 cavity = Cavity(),
                  laser_couplings = [],
                  cavity_couplings = [],
-                 verbose = False,
-                 compiled_hamiltonian_pipe=None):
+                 verbose = False):
         self.atom = atom
         self.cavity = cavity
         self.laser_couplings = laser_couplings if type(laser_couplings)==list else [laser_couplings]
         self.cavity_couplings = cavity_couplings if type(cavity_couplings)==list else [cavity_couplings]
         self.verbose = verbose
 
-        self.hams = []
-        self.c_op_list = []
-        self.args_hams = dict([('i', i)])
-
-        self.ketbras = self.__configure_ketbras()
-
-        self.compiled_hamiltonian_pipe= CompiledHamiltonianPipe() if not compiled_hamiltonian_pipe else compiled_hamiltonian_pipe
-        self.compiled_hamiltonian = self.__generate_hamiltonian()
-
-    def __ket(self, atom_state, cav_X, cav_Y):
-        return tensor(basis(self.atom.M, self.atom.atom_states[atom_state]),
-                      basis(self.cavity.N, cav_X),
-                      basis(self.cavity.N, cav_Y))
-
-    def __bra(self, atom_state, cav_X, cav_Y):
-        return self.__ket(atom_state, cav_X, cav_Y).dag()
-
-    def __configure_ketbras(self):
-
-        kets, bras = {}, {}
-        ketbras = {}
-
-        s = [list(self.atom.atom_states), self.cavity.cavity_states, self.cavity.cavity_states]
-        states = list(map(list, list(product(*s))))
-        for state in states:
-            kets[str(state)] = self.__ket(*state)
-            bras[str(state)] = self.__bra(*state)
-
-        for x in list(map(list, list(product(*[states, states])))):
-            ketbras[str(x)] = self.__ket(*x[0]) * self.__bra(*x[1])
-
-        return ketbras
-
-    def __generate_hamiltonian(self):
-
-        try:
-            compiled_hamiltonian = self.compiled_hamiltonian_pipe.fetch(self.atom, self.cavity, self.laser_couplings, self.cavity_couplings)
-            if self.verbose:
-                print("Pre-compiled Hamiltonian, {0}.pyx, is suitable to run this experiment.".format(compiled_hamiltonian.name))
-            self.__configure_c_ops(args_only=True)
-            self.__configure_laser_couplings(args_only=True)
-            self.__configure_cavity_couplings(args_only=True)
-            compiled_hamiltonian.atom = self.atom
-            compiled_hamiltonian.cavity = self.cavity
-            compiled_hamiltonian.laser_couplings = self.laser_couplings
-            compiled_hamiltonian.cavity_couplings = self.cavity_couplings
-            self.hams = compiled_hamiltonian.hams
-            self.c_op_list = compiled_hamiltonian.c_ops
-
-        except MissingItemError:
-
-        # for ham in compiled_hamiltonians:
-        #     if ham.can_modify(self.atom, self.cavity, self.laser_couplings, self.cavity_couplings):
-        #         if self.verbose:
-        #             print("Pre-compiled Hamiltonian, {0}.pyx, can be modified to run this experiment.".
-        #                   format(ham.name))
-        #         ham_new = self.__copy_and_modify_hamiltonian(ham)
-        #         self.hams = ham_new.hams
-        #         self.c_op_list = ham_new.c_ops
-        #         self.__configure_c_ops(args_only=True)
-        #         self.__configure_laser_couplings(args_only=True)
-        #         self.__configure_cavity_couplings(args_only=True)
-        #         compiled_hamiltonians.append(ham_new)
-        #         if self.verbose:
-        #             print("\t{0}.pyx is a modified copy ready to run this experiment.".format(ham_new.name))
-        #         return ham_new
-
-            if self.verbose:
-                print("No suitable pre-compiled Hamiltonian found.  Generating Cython file...", end='')
-                t_start = time.time()
-
-            self.__configure_c_ops()
-            self.__configure_laser_couplings()
-            self.__configure_cavity_couplings()
-
-            # CompiledHamiltonianWarehouse()._lock.acquire()
-
-            name = 'ExperimentalRunner_Hamiltonian_{0}_{1}'.format(len(self.compiled_hamiltonian_pipe.get_all()), os.getpid())
-
-            self.hams = list(chain(*self.hams))
-
-            try:
-                if self.verbose:
-                    rhs_generate(self.hams, self.c_op_list, args=self.args_hams, name=name, cleanup=False)
-                else:
-                    with io.StringIO() as buf, redirect_stderr(buf):
-                        rhs_generate(self.hams, self.c_op_list, args=self.args_hams, name=name, cleanup=False)  #
-            except:
-                if self.verbose:
-                    print("\n\tException in rhs comp...adding additional setups...", end='')
-                    # print('buf:\n', buf.getvalue())
-                for laser_couping in self.laser_couplings:
-                    if laser_couping.setup_pyx != [] or laser_couping.add_pyx != []:
-                        with fileinput.FileInput(name + '.pyx', inplace=True) as file:
-                            toWrite_setup = True
-                            toWrite_add = True
-                            for line in file:
-                                if '#' not in line and toWrite_setup:
-                                    for input in laser_couping.setup_pyx:
-                                        print(input, end='\n')
-                                    toWrite_setup = False
-                                if '@cython.cdivision(True)' in line and toWrite_add:
-                                    for input in laser_couping.add_pyx:
-                                        print(input, end='\n')
-                                    toWrite_add = False
-                                print(line, end='')
-                            fileinput.close()
-                if self.verbose:
-                    print("and trying rhs generate again...", end='')
-                code = compile('from ' + name + ' import cy_td_ode_rhs', '<string>', 'exec')
-                exec(code, globals())
-                solver.config.tdfunc = cy_td_ode_rhs
-
-            compiled_hamiltonian = CompiledHamiltonian(name=name,
-                                                       hams=self.hams,
-                                                       atom=self.atom,
-                                                       cavity=self.cavity,
-                                                       laser_couplings=self.laser_couplings,
-                                                       cavity_couplings=self.cavity_couplings,
-                                                       c_ops=self.c_op_list,
-                                                       tdname=solver.config.tdname,
-                                                       tdfunc=solver.config.tdfunc)
-
-            self.compiled_hamiltonian_pipe.put(compiled_hamiltonian)
-
-            # CompiledHamiltonianWarehouse()._lock.release()
-
-            if self.verbose:
-                print("done.\n\tNew file is {0}.pyx.  Generated in {1} seconds.".format(name,
-                                                                                        np.round(time.time() - t_start, 3)))
-
-
-        return compiled_hamiltonian
-
-    def __configure_c_ops(self, args_only=False):
-
-        self.args_hams.update({"deltaP": self.cavity.deltaP})
-
-        if not args_only:
-            # Define collapse operators
-            c_op_list = []
-
-            R_MC = self.cavity.R_CL.getH() * self.cavity.R_ML
-            alpha_MC, beta_MC, phi1_MC, phi2_MC = R2args(R_MC)
-
-            aX = tensor(qeye(self.atom.M), destroy(self.cavity.N), qeye(self.cavity.N))
-            aY = tensor(qeye(self.atom.M), qeye(self.cavity.N), destroy(self.cavity.N))
-
-            aM1X = np.conj(np.exp(i * phi1_MC) * alpha_MC) * aX
-            aM1Y = np.conj(np.exp(i * phi2_MC) * beta_MC) * aY
-            aM2X = np.conj(-np.exp(-i * phi2_MC) * beta_MC) * aX
-            aM2Y = np.conj(np.exp(-i * phi1_MC) * alpha_MC) * aY
-
-            '''
-            Deprecated TDB 16-08-18: Group collapse terms into fewest operators for speed.
-            '''
-            # for kappa, aMX, aMY in zip([self.cavity.kappa1, self.cavity.kappa2], [aM1X, aM2X], [aM1Y, aM2Y]):
-            #     c_op_list.append(2 * kappa * lindblad_dissipator(aMX))
-            #     c_op_list.append(2 * kappa * lindblad_dissipator(aMY))
-            #     c_op_list.append([2 * kappa * (sprepost(aMY, aMX.dag())
-            #                                    - 0.5 * spost(aMX.dag() * aMY)
-            #                                    - 0.5 * spre(aMX.dag() * aMY)),
-            #                       'exp(i*deltaP*t)'])
-            #     c_op_list.append([2 * kappa * (sprepost(aMX, aMY.dag())
-            #                                    - 0.5 * spost(aMY.dag() * aMX)
-            #                                    - 0.5 * spre(aMY.dag() * aMX)),
-            #                       'exp(-i*deltaP*t)'])
-
-            c_op_list.append(2 * self.cavity.kappa1 * lindblad_dissipator(aM1X) +
-                             2 * self.cavity.kappa1 * lindblad_dissipator(aM1Y) +
-                             2 * self.cavity.kappa2 * lindblad_dissipator(aM2X) +
-                             2 * self.cavity.kappa2 * lindblad_dissipator(aM2Y))
-            c_op_list.append([2 * self.cavity.kappa1 * (sprepost(aM1Y, aM1X.dag())
-                                                        - 0.5 * spost(aM1X.dag() * aM1Y)
-                                                        - 0.5 * spre(aM1X.dag() * aM1Y)) +
-                              2 * self.cavity.kappa2 * (sprepost(aM2Y, aM2X.dag())
-                                                        - 0.5 * spost(aM2X.dag() * aM2Y)
-                                                        - 0.5 * spre(aM2X.dag() * aM2Y)),
-                              'exp(i*deltaP*t)'])
-            c_op_list.append([2 * self.cavity.kappa1 * (sprepost(aM1X, aM1Y.dag())
-                                                        - 0.5 * spost(aM1Y.dag() * aM1X)
-                                                        - 0.5 * spre(aM1Y.dag() * aM1X)) +
-                              2 * self.cavity.kappa2 * (sprepost(aM2X, aM2Y.dag())
-                                                        - 0.5 * spost(aM2Y.dag() * aM2X)
-                                                        - 0.5 * spre(aM2Y.dag() * aM2X)),
-                              'exp(-i*deltaP*t)'])
-
-            spontEmmChannels = self.atom.get_spontaneous_emission_channels()
-
-            spontDecayOps = []
-
-            for x in spontEmmChannels:
-                try:
-                    spontDecayOps.append(x[2] * np.sqrt(2 * self.atom.gamma) *
-                                         tensor(
-                                             basis(self.atom.M, self.atom.atom_states[x[0]]) *
-                                                basis(self.atom.M, self.atom.atom_states[x[1]]).dag(),
-                                             qeye(self.cavity.N),
-                                             qeye(self.cavity.N)))
-                except KeyError:
-                    pass
-
-            c_op_list += spontDecayOps
-
-            self.c_op_list = c_op_list
-
-    def __configure_laser_couplings(self, args_only=False):
-
-        for laser_coupling in self.laser_couplings:
-            g, x = laser_coupling.g, laser_coupling.x
-            self.atom.check_coupling(g, x)
-
-            Omega = laser_coupling.omega0
-            Omega_lab = 'Omega_{0}{1}'.format(g, x)
-            omegaL = laser_coupling.deltaL
-            omegaL_lab = 'omegaL_{0}{1}'.format(g, x)
-
-            self.args_hams.update({Omega_lab: Omega,
-                                   omegaL_lab: omegaL})
-            self.args_hams.update(laser_coupling.args_ham)
-
-            if not args_only:
-                pulse_shape = laser_coupling.pulse_shape
-
-                def kb(a, b):
-                    return self.ketbras[str([a, b])]
-
-                self.hams.append([
-                    [-(1 / 2) * (
-                            (kb([g, 0, 0], [x, 0, 0]) + kb([g, 0, 1], [x, 0, 1]) +
-                             kb([g, 1, 0], [x, 1, 0]) + kb([g, 1, 1], [x, 1, 1])) +
-                            (kb([x, 0, 0], [g, 0, 0]) + kb([x, 0, 1], [g, 0, 1]) +
-                             kb([x, 1, 0], [g, 1, 0]) + kb([x, 1, 1], [g, 1, 1]))
-                    ), '{0} * {1} * cos({2}*t)'.format(Omega_lab, pulse_shape, omegaL_lab)],
-                    [i * (1 / 2) * (
-                            (kb([x, 0, 0], [g, 0, 0]) + kb([x, 0, 1], [g, 0, 1]) +
-                             kb([x, 1, 0], [g, 1, 0]) + kb([x, 1, 1], [g, 1, 1])) -
-                            (kb([g, 0, 0], [x, 0, 0]) - kb([g, 0, 1], [x, 0, 1]) -
-                             kb([g, 1, 0], [x, 1, 0]) - kb([g, 1, 1], [x, 1, 1]))
-                    ), '{0} * {1} * sin({2}*t)'.format(Omega_lab, pulse_shape, omegaL_lab)]
-                ])
-
-    def __configure_cavity_couplings(self, args_only=False):
-
-        # Rotation from Atom -> Cavity: R_LA: {|+>,|->} -> {|X>,|Y>}
-        R_AC = self.cavity.R_CL.getH() * self.atom.R_AL
-        alpha_AC, beta_AC, phi1_AC, phi2_AC = R2args(R_AC)
-
-        self.args_hams.update({"alpha_AC": alpha_AC,
-                               "beta_AC": beta_AC,
-                               "phi1_AC": phi1_AC,
-                               "phi2_AC": phi2_AC})
-
-        def kb(a, b):
-            return self.ketbras[str([a, b])]
-
-        for cavity_coupling in self.cavity_couplings:
-            g, x = cavity_coupling.g, cavity_coupling.x
-            self.atom.check_coupling(g, x)
-
-            g0 = cavity_coupling.g0
-            g0_lab = 'g0_{0}{1}'.format(g, x)
-
-            if g0 != self.cavity.g:
-                print('\n\tWARNING: CavityCoupling does not have the same ' + \
-                      'atom-cavity coupling rate (g0/2pi={0}MHz) as the ' + \
-                      'configured cavity (g0/2pi={1}MHz) .  I hope you ' + \
-                      'know what you are doing...'.format(
-                    *[np.round(x/(2*np.pi)) for x in [g0,self.cavity.g]]
-                ))
-
-            omegaC = cavity_coupling.deltaC
-            omegaC_X = omegaC + self.cavity.deltaP / 2
-            omegaC_Y = omegaC - self.cavity.deltaP / 2
-            omegaC_X_lab = 'omegaC_X_{0}{1}'.format(g, x)
-            omegaC_Y_lab = 'omegaC_Y_{0}{1}'.format(g, x)
-            self.args_hams.update({g0_lab: g0,
-                                   omegaC_X_lab: omegaC_X,
-                                   omegaC_Y_lab: omegaC_Y})
-
-            if not args_only:
-                deltaM = cavity_coupling.deltaM
-
-                if deltaM == 1:
-                    H_coupling = [
-                        [-1 * alpha_AC * (
-                                kb([g, 1, 0], [x, 0, 0]) + kb([g, 1, 1], [x, 0, 1]) +
-                                kb([x, 0, 0], [g, 1, 0]) + kb([x, 0, 1], [g, 1, 1])
-                        ), '{0} * cos({1}*t + phi1_AC)'.format(g0_lab, omegaC_X_lab)],
-
-                        [-i * 1 * alpha_AC * (
-                                kb([g, 1, 0], [x, 0, 0]) + kb([g, 1, 1], [x, 0, 1]) -
-                                kb([x, 0, 0], [g, 1, 0]) - kb([x, 0, 1], [g, 1, 1])
-                        ), '{0} * sin({1}*t + phi1_AC)'.format(g0_lab ,omegaC_X_lab)],
-
-                        [-1 * beta_AC * (
-                                kb([g, 0, 1], [x, 0, 0]) + kb([g, 1, 1], [x, 1, 0]) +
-                                kb([x, 0, 0], [g, 0, 1]) + kb([x, 1, 0], [g, 1, 1])
-                        ), '{0} * cos({1}*t + phi2_AC)'.format(g0_lab ,omegaC_Y_lab)],
-
-                        [-i * 1 * beta_AC * (
-                                kb([g, 0, 1], [x, 0, 0]) + kb([g, 1, 1], [x, 1, 0]) -
-                                kb([x, 0, 0], [g, 0, 1]) - kb([x, 1, 0], [g, 1, 1])
-                        ), '{0} * sin({1}*t + phi2_AC)'.format(g0_lab, omegaC_Y_lab)]
-                    ]
-
-                elif deltaM == -1:
-                    H_coupling = [
-                        [-1 *  alpha_AC * (
-                                kb([g, 0, 1], [x, 0, 0]) + kb([g, 1, 1], [x, 1, 0]) +
-                                kb([x, 0, 0], [g, 0, 1]) + kb([x, 1, 0], [g, 1, 1])
-                        ), '{0} * cos({1}*t - phi1_AC)'.format(g0_lab, omegaC_Y_lab)],
-
-                        [-i * 1 * alpha_AC * (
-                                kb([g, 0, 1], [x, 0, 0]) + kb([g, 1, 1], [x, 1, 0]) -
-                                kb([x, 0, 0], [g, 0, 1]) - kb([x, 1, 0], [g, 1, 1])
-                        ), '{0} * sin({1}*t - phi1_AC)'.format(g0_lab, omegaC_Y_lab)],
-
-                        [1 *  beta_AC * (
-                                kb([g, 1, 0], [x, 0, 0]) + kb([g, 1, 1], [x, 0, 1]) +
-                                kb([x, 0, 0], [g, 1, 0]) + kb([x, 0, 1], [g, 1, 1])
-                        ), '{0} * cos({1}*t - phi2_AC)'.format(g0_lab, omegaC_X_lab)],
-
-                        [i * 1 * beta_AC * (
-                                kb([g, 1, 0], [x, 0, 0]) + kb([g, 1, 1], [x, 0, 1]) -
-                                kb([x, 0, 0], [g, 1, 0]) - kb([x, 0, 1], [g, 1, 1])
-                        ), '{0} * sin({1}*t - phi2_AC)'.format(g0_lab, omegaC_X_lab)]
-                    ]
-
-                else:
-                    raise Exception("deltaM must be +/-1")
-
-                self.hams.append(H_coupling)
-
-    # def __copy_and_modify_hamiltonian(self, ham):
-    #     '''
-    #     Copies and modifies a pre-compiled Hamiltonian to suit the current experimental set-up
-    #     :param hamiltonian:
-    #     :return:
-    #     '''
-    #     name = 'ExperimentalRunner_Hamiltonian_{0}'.format(len(compiled_hamiltonians))
-    #
-    #     copyfile(ham.name + '.pyx', name +  '.pyx')
-    #
-    #     old_pulses = [x.pulse_shape for x in ham.laser_couplings]
-    #     new_pulses = [x.pulse_shape for x in self.laser_couplings]
-    #
-    #     with fileinput.FileInput(name +  '.pyx', inplace=True) as file:
-    #         for line in file:
-    #             if 'spmvpy' in line:
-    #                 for old, new in zip(old_pulses,new_pulses):
-    #                     print(line.replace(old, new), end='')
-    #             else:
-    #                 print(line, end='')
-    #     fileinput.close()
-    #
-    #     hams_new = ham.hams
-    #     for old_coupling, new_coupling in zip(ham.laser_couplings, self.laser_couplings):
-    #         id = '{0}{1}'.format(new_coupling.g, new_coupling.x)
-    #         old = old_coupling.pulse_shape
-    #         new = new_coupling.pulse_shape
-    #         hams_new = [[H, coeff.replace(old, new) if id and old in coeff else coeff]
-    #                     for H, coeff in hams_new]
-    #
-    #     if self.verbose:
-    #         t_start = time.time()
-    #         print("\tCompiling new rhs function.",end='...')
-    #     code = compile('from ' + name + ' import cy_td_ode_rhs', '<string>', 'exec')
-    #     exec(code, globals())
-    #     solver.config.tdfunc = cy_td_ode_rhs
-    #     if self.verbose:
-    #         print("done in {0} seconds".format(np.round(time.time() - t_start, 3)))
-    #
-    #     return CompiledHamiltonian(name=name,
-    #                               hams=hams_new,
-    #                               atom=ham.atom,
-    #                               cavity=ham.cavity,
-    #                               laser_couplings=self.laser_couplings,
-    #                               cavity_couplings=ham.cavity_couplings,
-    #                               c_ops=ham.c_ops,
-    #                               tdname=name,
-    #                               tdfunc=cy_td_ode_rhs)
+        self.compiled_hamiltonian = CompiledHamiltonianFactory.get(atom, cavity, laser_couplings, cavity_couplings, verbose)
 
     def run(self, psi0=['gM',0,0], t_length=1.2, n_steps=201):
+
         t, t_step = np.linspace(0, t_length, n_steps, retstep=True)
 
         # Clears the rhs memory, so that when we set rhs_reuse to true, it has nothing
@@ -597,48 +163,44 @@ class ExperimentalRunner():
         rhs_clear()
         opts = Options(rhs_reuse=True, rhs_filename=self.compiled_hamiltonian.name)
 
-        psi0 = self.__ket(*psi0)
-
         if self.verbose:
             t_start = time.time()
             print("Running simulation with {0} timesteps".format(n_steps), end="...")
         solver.config.tdfunc = self.compiled_hamiltonian.tdfunc
-        solver.config.tdname = self.compiled_hamiltonian.tdname
-        output = mesolve(self.hams,
-                         psi0,
+        solver.config.tdname = self.compiled_hamiltonian.name
+
+        output = mesolve(self.compiled_hamiltonian.hams,
+                         self.compiled_hamiltonian.states.ket(*psi0),
                          t,
-                         self.c_op_list,
+                         self.compiled_hamiltonian.c_op_list,
                          [],
-                         args=self.args_hams,
+                         args=self.compiled_hamiltonian.args_hams,
                          options=opts)
+
         if self.verbose:
             print("finished in {0} seconds".format(np.round(time.time()-t_start,3)))
 
-        return ExperimentalResults(output,
-                                   self.compiled_hamiltonian,
-                                   self.args_hams,
-                                   self.ketbras,
-                                   self.verbose)
+        return ExperimentalResults(output, self.compiled_hamiltonian, self.verbose)
 
 
 class ExperimentalResults():
 
-    def __init__(self, output, hamiltonian, args, ketbras, verbose=False):
+    def __init__(self, output, compiled_hamiltonian, verbose=False):
         self.output = output
-        self.hamiltonian = hamiltonian
-        self.args = args
-        self.ketbras = ketbras
+        self.compiled_hamiltonian = compiled_hamiltonian
+        self.args = self.compiled_hamiltonian.args_hams
+        self.ketbras = self.compiled_hamiltonian.states.ketbras
         self.verbose = verbose
 
-        self.emission_operators = EmissionOperatorsFactory.get(hamiltonian.atom,
-                                                               hamiltonian.cavity,
+        self.emission_operators = EmissionOperatorsFactory.get(self.compiled_hamiltonian.atom,
+                                                               self.compiled_hamiltonian.cavity,
                                                                self.ketbras,
                                                                self.verbose)
-        self.number_operators = NumberOperatorsFactory.get(hamiltonian.atom,
-                                                           hamiltonian.cavity,
+        self.number_operators = NumberOperatorsFactory.get(self.compiled_hamiltonian.atom,
+                                                           self.compiled_hamiltonian.cavity,
                                                            self.ketbras,
                                                            self.verbose)
-        self.atomic_operators = AtomicOperatorsFactory.get(hamiltonian.atom,
+        self.atomic_operators = AtomicOperatorsFactory.get(self.compiled_hamiltonian.atom,
                                                            self.ketbras,
                                                            self.verbose)
 
@@ -706,7 +268,6 @@ if a suitable one is found, otherwise it creates a new _xxxOperators instance an
 class Singleton(type):
     _instances = {}
     def __call__(cls, *args, **kwargs):
-        print('Singleton.__call__, PID:', os.getpid()),
         if cls not in cls._instances:
             cls._instances[cls] = super(Singleton, cls).__call__(*args, **kwargs)
         return cls._instances[cls]
@@ -983,40 +544,421 @@ class AtomicOperatorsFactory(metaclass=Singleton):
             else:
                 return False
 
+class StatesFactory(metaclass=Singleton):
 
-# __compiled_hamiltonians = []
+    states = []
 
-class CompiledHamiltonianPipe(metaclass=Singleton):
+    @classmethod
+    def get(cls, atom, cavity, verbose=False):
+        for s in cls.states:
+            if s._is_compatible(atom, cavity):
+                if verbose: print("\tFound suitable _States obj for setup.")
+                return s
+        else:
+            s = cls._States(atom, cavity)
+            cls.states.append(s)
+            return s
+
+    class _States():
+
+        def __init__(self, atom, cavity):
+
+            self.atom = atom
+            self.cavity = cavity
+
+            self.kets = {}
+            self.bras = {}
+            self.ketbras = {}
+
+            def __ket(atom_state, cav_X, cav_Y):
+                return tensor(basis(self.atom.M, self.atom.atom_states[atom_state]),
+                              basis(self.cavity.N, cav_X),
+                              basis(self.cavity.N, cav_Y))
+
+            def __bra(atom_state, cav_X, cav_Y):
+                return __ket(atom_state, cav_X, cav_Y).dag()
+
+            s = [list(self.atom.atom_states), self.cavity.cavity_states, self.cavity.cavity_states]
+            states = list(map(list, list(product(*s))))
+            for state in states:
+                self.kets[str(state)] = __ket(*state)
+                self.bras[str(state)] = __bra(*state)
+
+            for x in list(map(list, list(product(*[states, states])))):
+                self.ketbras[str(x)] = __ket(*x[0]) * __bra(*x[1])
+
+        def ket(self, atom_state, cav_X, cav_Y):
+            try:
+                ket = self.kets[str([atom_state, cav_X, cav_Y])]
+            except KeyError:
+                ket = tensor(basis(self.atom.M, self.atom.atom_states[atom_state]),
+                             basis(self.cavity.N, cav_X),
+                             basis(self.cavity.N, cav_Y))
+                self.kets[str([atom_state, cav_X, cav_Y])] = ket
+
+            return ket
+
+        def bra(self, atom_state, cav_X, cav_Y):
+            try:
+                bra = self.bras[str([atom_state, cav_X, cav_Y])]
+            except KeyError:
+                bra = tensor(basis(self.atom.M, self.atom.atom_states[atom_state]),
+                             basis(self.cavity.N, cav_X),
+                             basis(self.cavity.N, cav_Y)).dag()
+                self.bras[str([atom_state, cav_X, cav_Y])] = bra
+
+            return bra
+
+        def _is_compatible(self, atom, cavity):
+            if (self.atom == atom) and (self.cavity == cavity):
+                return True
+            else:
+                return False
+
+class CompiledHamiltonianFactory(metaclass=Singleton):
 
     __compiled_hamiltonians = []
 
     @classmethod
     def put(cls, args):
-        # print('put', os.getpid())
-        # global __compiled_hamiltonians
         cls.__compiled_hamiltonians.append(args)
 
-    @classmethod
-    def get_all(cls):
-        # print('get_all', os.getpid())
-        # global __compiled_hamiltonians
-        return cls.__compiled_hamiltonians
+    # @classmethod
+    # def get_all(cls):
+    #     return cls.__compiled_hamiltonians
 
     @classmethod
-    def fetch(cls, atom, cavity, laser_couplings, cavity_couplings):
-        # global __compiled_hamiltonians
+    def get(cls, atom, cavity, laser_couplings, cavity_couplings, verbose=True):
+
+        ham = None
+
         for c_ham in cls.__compiled_hamiltonians:
-            if c_ham.can_use(atom, cavity, laser_couplings, cavity_couplings):
-                return c_ham
-        raise (MissingItemError())
+            if c_ham._is_compatible(atom, cavity, laser_couplings, cavity_couplings):
+                if verbose:
+                    print("Pre-compiled Hamiltonian, {0}.pyx, is suitable to run this experiment.".format(c_ham.name))
+
+                ham = copy.deepcopy(c_ham)
+
+                ham.atom = atom
+                ham.cavity = cavity
+                ham.laser_couplings = laser_couplings
+                ham.cavity_couplings = cavity_couplings
+                ham._configure_c_ops(args_only=True)
+                ham._configure_laser_couplings(args_only=True)
+                ham._configure_cavity_couplings(args_only=True)
+
+        if not ham:
+            if verbose:
+                print("No suitable pre-compiled Hamiltonian found.  Generating Cython file...", end='')
+                t_start = time.time()
+            ham = cls._CompiledHamiltonian(atom, cavity, laser_couplings, cavity_couplings,
+                                           'ExperimentalRunner_Hamiltonian_{0}_{1}'.format(
+                                               len(cls.__compiled_hamiltonians),
+                                               os.getpid())
+                                           )
+            if verbose:
+                print("done.\n\tNew file is {0}.pyx.  Generated in {1} seconds.".format(ham.name,
+                                                                                        np.round(time.time() - t_start, 3)))
+
+            cls.put(ham)
+
+        return ham
 
     @classmethod
     def clear(cls):
-        # global __compiled_hamiltonians
         cls.__compiled_hamiltonians = []
 
-class MissingItemError(Exception):
-    def __init__(self, message='Sutiable compiled Hamiltonian not found.', errors=[]):
-        # Call the base class constructor with the parameters it needs
-        super().__init__(message)
+    class _CompiledHamiltonian:
 
+        def __init__(self, atom, cavity, laser_couplings, cavity_couplings, name, verbose=False):
+
+            self.atom = atom
+            self.cavity = cavity
+            self.laser_couplings = laser_couplings
+            self.cavity_couplings = cavity_couplings
+            self.name = name
+
+            self.states = StatesFactory.get(self.atom, self.cavity, verbose)
+
+            # Prepare args_dict and the lists for the Hamiltonians and collapse operators.
+            self.args_hams = dict([('i', i)])
+            self.hams = []
+            self.c_op_list = []
+
+            self._configure_c_ops()
+            self._configure_laser_couplings()
+            self._configure_cavity_couplings()
+
+            self.name = name
+
+            self.tdfunc = self._compile(verbose)
+
+        def _configure_c_ops(self, args_only=False):
+            '''
+            Internal function to populate the list of collapse operators for the configured
+            atom and cavity.
+
+            :param args_only: Change only the configured arguments for the simulated Hamiltonians,
+                              not the Hamiltonians themselves.
+            :return: None
+            '''
+            self.args_hams.update({"deltaP": self.cavity.deltaP})
+
+            if not args_only:
+                # Define collapse operators
+                R_MC = self.cavity.R_CL.getH() * self.cavity.R_ML
+                alpha_MC, beta_MC, phi1_MC, phi2_MC = R2args(R_MC)
+
+                aX = tensor(qeye(self.atom.M), destroy(self.cavity.N), qeye(self.cavity.N))
+                aY = tensor(qeye(self.atom.M), qeye(self.cavity.N), destroy(self.cavity.N))
+
+                aM1X = np.conj(np.exp(i * phi1_MC) * alpha_MC) * aX
+                aM1Y = np.conj(np.exp(i * phi2_MC) * beta_MC) * aY
+                aM2X = np.conj(-np.exp(-i * phi2_MC) * beta_MC) * aX
+                aM2Y = np.conj(np.exp(-i * phi1_MC) * alpha_MC) * aY
+
+                # Group collapse terms into fewest operators for speed.
+                self.c_op_list.append(2 * self.cavity.kappa1 * lindblad_dissipator(aM1X) +
+                                      2 * self.cavity.kappa1 * lindblad_dissipator(aM1Y) +
+                                      2 * self.cavity.kappa2 * lindblad_dissipator(aM2X) +
+                                      2 * self.cavity.kappa2 * lindblad_dissipator(aM2Y))
+                self.c_op_list.append([2 * self.cavity.kappa1 * (sprepost(aM1Y, aM1X.dag())
+                                                            - 0.5 * spost(aM1X.dag() * aM1Y)
+                                                            - 0.5 * spre(aM1X.dag() * aM1Y)) +
+                                       2 * self.cavity.kappa2 * (sprepost(aM2Y, aM2X.dag())
+                                                            - 0.5 * spost(aM2X.dag() * aM2Y)
+                                                            - 0.5 * spre(aM2X.dag() * aM2Y)),
+                                       'exp(i*deltaP*t)'])
+                self.c_op_list.append([2 * self.cavity.kappa1 * (sprepost(aM1X, aM1Y.dag())
+                                                            - 0.5 * spost(aM1Y.dag() * aM1X)
+                                                            - 0.5 * spre(aM1Y.dag() * aM1X)) +
+                                       2 * self.cavity.kappa2 * (sprepost(aM2X, aM2Y.dag())
+                                                            - 0.5 * spost(aM2Y.dag() * aM2X)
+                                                            - 0.5 * spre(aM2Y.dag() * aM2X)),
+                                       'exp(-i*deltaP*t)'])
+
+                spontEmmChannels = self.atom.get_spontaneous_emission_channels()
+
+                spontDecayOps = []
+
+                for x in spontEmmChannels:
+                    try:
+                        spontDecayOps.append(x[2] * np.sqrt(2 * self.atom.gamma) *
+                                             tensor(
+                                                 basis(self.atom.M, self.atom.atom_states[x[0]]) *
+                                                 basis(self.atom.M, self.atom.atom_states[x[1]]).dag(),
+                                                 qeye(self.cavity.N),
+                                                 qeye(self.cavity.N)))
+                    except KeyError:
+                        pass
+
+                self.c_op_list += spontDecayOps
+
+        def _configure_laser_couplings(self, args_only=False):
+            '''
+            Internal function to configure the laser couplings by adding the required terms
+            to the list of Hamiltonians.
+
+            :param args_only: Change only the configured arguments for the simulated Hamiltonians,
+                              not the Hamiltonians themselves.
+            :return: None
+            '''
+            for laser_coupling in self.laser_couplings:
+                g, x = laser_coupling.g, laser_coupling.x
+                self.atom.check_coupling(g, x)
+
+                Omega = laser_coupling.omega0
+                Omega_lab = 'Omega_{0}{1}'.format(g, x)
+                omegaL = laser_coupling.deltaL
+                omegaL_lab = 'omegaL_{0}{1}'.format(g, x)
+
+                self.args_hams.update({Omega_lab: Omega,
+                                       omegaL_lab: omegaL})
+                self.args_hams.update(laser_coupling.args_ham)
+
+                if not args_only:
+                    pulse_shape = laser_coupling.pulse_shape
+
+                    def kb(a, b):
+                        return self.states.ketbras[str([a, b])]
+
+                    self.hams.append([
+                        [-(1 / 2) * (
+                                (kb([g, 0, 0], [x, 0, 0]) + kb([g, 0, 1], [x, 0, 1]) +
+                                 kb([g, 1, 0], [x, 1, 0]) + kb([g, 1, 1], [x, 1, 1])) +
+                                (kb([x, 0, 0], [g, 0, 0]) + kb([x, 0, 1], [g, 0, 1]) +
+                                 kb([x, 1, 0], [g, 1, 0]) + kb([x, 1, 1], [g, 1, 1]))
+                        ), '{0} * {1} * cos({2}*t)'.format(Omega_lab, pulse_shape, omegaL_lab)],
+                        [i * (1 / 2) * (
+                                (kb([x, 0, 0], [g, 0, 0]) + kb([x, 0, 1], [g, 0, 1]) +
+                                 kb([x, 1, 0], [g, 1, 0]) + kb([x, 1, 1], [g, 1, 1])) -
+                                (kb([g, 0, 0], [x, 0, 0]) - kb([g, 0, 1], [x, 0, 1]) -
+                                 kb([g, 1, 0], [x, 1, 0]) - kb([g, 1, 1], [x, 1, 1]))
+                        ), '{0} * {1} * sin({2}*t)'.format(Omega_lab, pulse_shape, omegaL_lab)]
+                    ])
+
+        def _configure_cavity_couplings(self, args_only=False):
+            '''
+            Internal function to configure the cavity couplings by adding the required terms
+            to the list of Hamiltonians.
+
+            :param args_only: Change only the configured arguments for the simulated Hamiltonians,
+                              not the Hamiltonians themselves.
+            :return: None
+            '''
+            # Rotation from Atom -> Cavity: R_LA: {|+>,|->} -> {|X>,|Y>}
+            R_AC = self.cavity.R_CL.getH() * self.atom.R_AL
+            alpha_AC, beta_AC, phi1_AC, phi2_AC = R2args(R_AC)
+
+            self.args_hams.update({"alpha_AC": alpha_AC,
+                                   "beta_AC": beta_AC,
+                                   "phi1_AC": phi1_AC,
+                                   "phi2_AC": phi2_AC})
+
+            def kb(a, b):
+                return self.states.ketbras[str([a, b])]
+
+            for cavity_coupling in self.cavity_couplings:
+                g, x = cavity_coupling.g, cavity_coupling.x
+                self.atom.check_coupling(g, x)
+
+                g0 = cavity_coupling.g0
+                g0_lab = 'g0_{0}{1}'.format(g, x)
+
+                if g0 != self.cavity.g:
+                    print('\n\tWARNING: CavityCoupling does not have the same ' + \
+                          'atom-cavity coupling rate (g0/2pi={0}MHz) as the ' + \
+                          'configured cavity (g0/2pi={1}MHz) .  I hope you ' + \
+                          'know what you are doing...'.format(
+                              *[np.round(x / (2 * np.pi)) for x in [g0, self.cavity.g]]
+                          ))
+
+                omegaC = cavity_coupling.deltaC
+                omegaC_X = omegaC + self.cavity.deltaP / 2
+                omegaC_Y = omegaC - self.cavity.deltaP / 2
+                omegaC_X_lab = 'omegaC_X_{0}{1}'.format(g, x)
+                omegaC_Y_lab = 'omegaC_Y_{0}{1}'.format(g, x)
+                self.args_hams.update({g0_lab: g0,
+                                       omegaC_X_lab: omegaC_X,
+                                       omegaC_Y_lab: omegaC_Y})
+
+                if not args_only:
+                    deltaM = cavity_coupling.deltaM
+
+                    if deltaM == 1:
+                        H_coupling = [
+                            [-1 * alpha_AC * (
+                                    kb([g, 1, 0], [x, 0, 0]) + kb([g, 1, 1], [x, 0, 1]) +
+                                    kb([x, 0, 0], [g, 1, 0]) + kb([x, 0, 1], [g, 1, 1])
+                            ), '{0} * cos({1}*t + phi1_AC)'.format(g0_lab, omegaC_X_lab)],
+
+                            [-i * 1 * alpha_AC * (
+                                    kb([g, 1, 0], [x, 0, 0]) + kb([g, 1, 1], [x, 0, 1]) -
+                                    kb([x, 0, 0], [g, 1, 0]) - kb([x, 0, 1], [g, 1, 1])
+                            ), '{0} * sin({1}*t + phi1_AC)'.format(g0_lab, omegaC_X_lab)],
+
+                            [-1 * beta_AC * (
+                                    kb([g, 0, 1], [x, 0, 0]) + kb([g, 1, 1], [x, 1, 0]) +
+                                    kb([x, 0, 0], [g, 0, 1]) + kb([x, 1, 0], [g, 1, 1])
+                            ), '{0} * cos({1}*t + phi2_AC)'.format(g0_lab, omegaC_Y_lab)],
+
+                            [-i * 1 * beta_AC * (
+                                    kb([g, 0, 1], [x, 0, 0]) + kb([g, 1, 1], [x, 1, 0]) -
+                                    kb([x, 0, 0], [g, 0, 1]) - kb([x, 1, 0], [g, 1, 1])
+                            ), '{0} * sin({1}*t + phi2_AC)'.format(g0_lab, omegaC_Y_lab)]
+                        ]
+
+                    elif deltaM == -1:
+                        H_coupling = [
+                            [-1 * alpha_AC * (
+                                    kb([g, 0, 1], [x, 0, 0]) + kb([g, 1, 1], [x, 1, 0]) +
+                                    kb([x, 0, 0], [g, 0, 1]) + kb([x, 1, 0], [g, 1, 1])
+                            ), '{0} * cos({1}*t - phi1_AC)'.format(g0_lab, omegaC_Y_lab)],
+
+                            [-i * 1 * alpha_AC * (
+                                    kb([g, 0, 1], [x, 0, 0]) + kb([g, 1, 1], [x, 1, 0]) -
+                                    kb([x, 0, 0], [g, 0, 1]) - kb([x, 1, 0], [g, 1, 1])
+                            ), '{0} * sin({1}*t - phi1_AC)'.format(g0_lab, omegaC_Y_lab)],
+
+                            [1 * beta_AC * (
+                                    kb([g, 1, 0], [x, 0, 0]) + kb([g, 1, 1], [x, 0, 1]) +
+                                    kb([x, 0, 0], [g, 1, 0]) + kb([x, 0, 1], [g, 1, 1])
+                            ), '{0} * cos({1}*t - phi2_AC)'.format(g0_lab, omegaC_X_lab)],
+
+                            [i * 1 * beta_AC * (
+                                    kb([g, 1, 0], [x, 0, 0]) + kb([g, 1, 1], [x, 0, 1]) -
+                                    kb([x, 0, 0], [g, 1, 0]) - kb([x, 0, 1], [g, 1, 1])
+                            ), '{0} * sin({1}*t - phi2_AC)'.format(g0_lab, omegaC_X_lab)]
+                        ]
+
+                    else:
+                        raise Exception("deltaM must be +/-1")
+
+                    self.hams.append(H_coupling)
+
+        def _compile(self, verbose=False):
+            '''
+            Compile the .pyx file into an executable Cython function.
+            :param verbose: Whether to print compilation details.
+            :return: None
+            '''
+            self.hams = list(chain(*self.hams))
+
+            # Define the function we will overwrite in the global namespace to run the simuluation.
+            global cy_td_ode_rhs
+            def cy_td_ode_rhs():
+                raise NotImplementedError
+
+            try:
+                if verbose:
+                    rhs_generate(self.hams, self.c_op_list, args=self.args_hams, name=self.name, cleanup=False)
+                else:
+                    with io.StringIO() as buf, redirect_stderr(buf):
+                        rhs_generate(self.hams, self.c_op_list, args=self.args_hams, name=self.name, cleanup=False)
+            except:
+                if verbose:
+                    print("\n\tException in rhs comp...adding additional setups...", end='')
+                    # print('buf:\n', buf.getvalue())
+                for laser_couping in self.laser_couplings:
+                    if laser_couping.setup_pyx != [] or laser_couping.add_pyx != []:
+                        with fileinput.FileInput(self.name + '.pyx', inplace=True) as file:
+                            toWrite_setup = True
+                            toWrite_add = True
+                            for line in file:
+                                if '#' not in line and toWrite_setup:
+                                    for input in laser_couping.setup_pyx:
+                                        print(input, end='\n')
+                                    toWrite_setup = False
+                                if '@cython.cdivision(True)' in line and toWrite_add:
+                                    for input in laser_couping.add_pyx:
+                                        print(input, end='\n')
+                                    toWrite_add = False
+                                print(line, end='')
+                            fileinput.close()
+                if verbose:
+                    print("and trying rhs generate again...", end='')
+                code = compile('from ' + self.name + ' import cy_td_ode_rhs', '<string>', 'exec')
+                exec(code, globals())
+
+                return cy_td_ode_rhs
+
+        def _is_compatible(self, atom, cavity, laser_couplings, cavity_couplings):
+            '''
+            Check whether the Hamiltonian can be used to simulate the given system without
+            recompiling the .pyx file.
+            :param atom:
+            :param cavity:
+            :param laser_couplings:
+            :param cavity_couplings:
+            :return: Boolean
+            '''
+            can_use = True
+            if self.atom != atom:
+                can_use = False
+            if self.cavity != cavity:
+                can_use = False
+            for x,y in list(zip(self.laser_couplings, laser_couplings)) + \
+                       list(zip(self.cavity_couplings, cavity_couplings)):
+                if x != y:
+                    can_use = False
+            return can_use
