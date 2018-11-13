@@ -1,19 +1,21 @@
 import numpy as np
+import matplotlib.pyplot as plt
 import copy
 import fileinput
 import time
+import os
+import io
 from itertools import chain, product
 from dataclasses import dataclass, field, asdict
-from qutip import *
-
-import os
-
-import io
+from abc import ABC, abstractmethod
 from contextlib import redirect_stdout, redirect_stderr
+from qutip import *
 
 np.set_printoptions(threshold=np.inf)
 
-# Global parameters
+##########################################
+# Globals                                #
+##########################################
 d = 3.584*10**(-29)
 i = np.complex(0,1)
 
@@ -23,6 +25,9 @@ def R2args(R):
     beta = np.sqrt(1 - alpha ** 2)
     return alpha, beta, phi1, phi2
 
+##########################################
+# Data Classes                           #
+##########################################
 @dataclass(eq=False)
 class RunnerDataClass:
 
@@ -97,6 +102,20 @@ class Cavity(RunnerDataClass):
     N: int = 2
     cavity_states: list = field(default_factory=list)
     g: float = 3 * 2. * np.pi
+    kappa: float = 3 * 2. * np.pi
+
+    def __post_init__(self):
+        self.cavity_states += [0,1]
+        self.N = len(self.cavity_states)
+
+    def _eq_ignore_fields(self):
+        return ['g']
+
+@dataclass(eq=False)
+class CavityBiref(RunnerDataClass):
+    N: int = 2
+    cavity_states: list = field(default_factory=list)
+    g: float = 3 * 2. * np.pi
     kappa1: float = 3 * 2. * np.pi
     kappa2: float = 3 * 2. * np.pi
     deltaP: float = 0 * 2. * np.pi
@@ -137,6 +156,9 @@ class CavityCoupling(RunnerDataClass):
     def _eq_ignore_fields(self):
         return ['g0','deltaC']
 
+##########################################
+# Runner and Results                     #
+##########################################
 class ExperimentalRunner():
 
     def __init__(self,
@@ -153,7 +175,7 @@ class ExperimentalRunner():
 
         self.compiled_hamiltonian = CompiledHamiltonianFactory.get(atom, cavity, laser_couplings, cavity_couplings, verbose)
 
-    def run(self, psi0=['gM',0,0], t_length=1.2, n_steps=201):
+    def run(self, psi0, t_length=1.2, n_steps=201):
 
         t, t_step = np.linspace(0, t_length, n_steps, retstep=True)
 
@@ -180,74 +202,11 @@ class ExperimentalRunner():
         if self.verbose:
             print("finished in {0} seconds".format(np.round(time.time()-t_start,3)))
 
-        return ExperimentalResults(output, self.compiled_hamiltonian, self.verbose)
+        return ExperimentalResultsFactory.get(output, self.compiled_hamiltonian, self.verbose)
 
-
-class ExperimentalResults():
-
-    def __init__(self, output, compiled_hamiltonian, verbose=False):
-        self.output = output
-        self.compiled_hamiltonian = compiled_hamiltonian
-        self.args = self.compiled_hamiltonian.args_hams
-        self.ketbras = self.compiled_hamiltonian.states.ketbras
-        self.verbose = verbose
-
-        self.emission_operators = EmissionOperatorsFactory.get(self.compiled_hamiltonian.atom,
-                                                               self.compiled_hamiltonian.cavity,
-                                                               self.ketbras,
-                                                               self.verbose)
-        self.number_operators = NumberOperatorsFactory.get(self.compiled_hamiltonian.atom,
-                                                           self.compiled_hamiltonian.cavity,
-                                                           self.ketbras,
-                                                           self.verbose)
-        self.atomic_operators = AtomicOperatorsFactory.get(self.compiled_hamiltonian.atom,
-                                                           self.ketbras,
-                                                           self.verbose)
-
-    def get_cavity_emission(self, R_ZL, i_output=[]):
-        if type(R_ZL)!=np.matrix:
-            raise ValueError("R_ZL must be a numpy matrix.")
-        emP_t, emM_t = self.emission_operators.get(self.output.times, R_ZL)
-
-        emP, emM = np.abs(np.array(
-            [expect(list(an_list), state) for an_list, state in zip(zip(emP_t, emM_t), self.__get_output_states(i_output))]
-        )).T
-
-        return emP, emM
-
-        return list(zip(*[iter(ems)] * 2))
-
-    def get_cavity_number(self, R_ZL, i_output=[]):
-        if type(R_ZL)!=np.matrix:
-            raise ValueError("R_ZL must be a numpy matrix.")
-        anP_t, anM_t = self.number_operators.get(self.output.times, R_ZL)
-
-        anP, anM = np.abs(np.array(
-            [expect(list(an_list), state) for an_list, state in zip(zip(anP_t, anM_t), self.__get_output_states(i_output))]
-        )).T
-
-        return anP, anM
-
-    def get_atomic_population(self, states=[], i_output=[]):
-        at_ops = self.atomic_operators.get_at_op(states)
-        return np.abs(expect(at_ops, self.__get_output_states(i_output)))
-
-    def get_total_spontaneous_emission(self, i_output=[]):
-        sp_op = self.atomic_operators.get_sp_op()
-        return expect(sp_op, self.__get_output_states(i_output))
-
-    def __get_output_states(self,i_output):
-        if not i_output:
-            out_states = self.output.states
-        elif type(i_output)==int:
-            out_states = self.output.states[i_output]
-        elif len(i_output)==2:
-            out_states = self.output.states[i_output[0]:i_output[1]]
-        else:
-            raise TypeError('i_output must be [], an integer, or a list/tuple of length 2')
-        return out_states
-
-
+##########################################
+# Factories                              #
+##########################################
 '''
 This is just some notes on the below.  Essentially I want to minimise re-computiation of the operators I track through
 the simulations (practically these are lists of matrices at each time step).  To do this I define a class that takes
@@ -283,19 +242,54 @@ class EmissionOperatorsFactory(metaclass=Singleton):
                 if verbose: print("\tFound suitable _EmissionOperators obj for setup.")
                 return em_op
         else:
-            em_op = cls._EmissionOperators(atom,cavity,ketbras,verbose)
+            if type(cavity)==Cavity:
+                em_op = cls._EmissionOperatorsCavitySingle(atom,cavity,ketbras,verbose)
+            elif type(cavity)==CavityBiref:
+                em_op = cls._EmissionOperatorsCavityBiref(atom,cavity,ketbras,verbose)
+            else:
+                raise Exception('Unrecognised cavity type:', type(cavity))
             cls.emission_operators.append(em_op)
             return em_op
 
-    class _EmissionOperators():
+    class _EmissionOperators(ABC):
 
         def __init__(self, atom, cavity, ketbras, verbose):
+            if verbose: print("\tCreating new _EmissionOperators obj for setup.")
+
             self.atom = atom
             self.cavity = cavity
             self.ketbras = ketbras
             self.verbose=verbose
 
-            if verbose: print("\tCreating new _EmissionOperators obj for setup.")
+        @abstractmethod
+        def get(self):
+            raise NotImplementedError()
+
+        def _is_compatible(self, atom, cavity):
+            if all([self.atom==atom,self.cavity==cavity]):
+                return True
+            else:
+                return False
+
+    class _EmissionOperatorsCavitySingle(_EmissionOperators):
+
+        def __init__(self, *args):
+            super().__init__(*args)
+
+            self.a = tensor(qeye(self.atom.M), destroy(self.cavity.N))
+            self.an = self.a.dag() * self.a
+
+            self.em = 2*self.cavity.kappa*self.an
+
+        def get(self, t_series=None):
+            return self.em if not t_series else [self.em]*len(t_series)
+
+    class _EmissionOperatorsCavityBiref(_EmissionOperators):
+
+        def __init__(self, *args):
+            super().__init__(*args)
+
+            self.operator_series = []
 
             def kb(a, b):
                 return self.ketbras[str([a, b])]
@@ -308,11 +302,9 @@ class EmissionOperatorsFactory(metaclass=Singleton):
             self.em_fast_4 = sum(map(lambda s: kb([s, 0, 1], [s, 1, 0]), all_atom_states))
             self.em_fast_5 = sum(map(lambda s: kb([s, 1, 0], [s, 0, 1]), all_atom_states))
 
-            self.operator_series = []
-
         def get(self, t_series, R_ZL):
             for t, R, kappa1, kappa2, deltaP, op_series in self.operator_series:
-                if all([np.array_equal(t,t_series),np.array_equal(R, R_ZL)]):
+                if all([np.array_equal(t, t_series), np.array_equal(R, R_ZL)]):
                     if self.verbose: print("\tFound suitable pre-computed emission operator series.")
                     return op_series
             return self.__generate(t_series, R_ZL)
@@ -396,12 +388,6 @@ class EmissionOperatorsFactory(metaclass=Singleton):
 
             return emRot1s, emRot2s
 
-        def _is_compatible(self, atom, cavity):
-            if all([self.atom==atom,self.cavity==cavity]):
-                return True
-            else:
-                return False
-
 class NumberOperatorsFactory(metaclass=Singleton):
 
     number_operators = []
@@ -413,19 +399,53 @@ class NumberOperatorsFactory(metaclass=Singleton):
                 if verbose: print("\tFound suitable _NumberOperators obj for setup.")
                 return an_op
         else:
-            an_op = cls._NumberOperators(atom, cavity, ketbras,verbose)
+            if type(cavity)==Cavity:
+                an_op = cls._NumberOperatorsCavitySingle(atom,cavity,ketbras,verbose)
+            elif type(cavity)==CavityBiref:
+                an_op = cls._NumberOperatorsCavityBiref(atom,cavity,ketbras,verbose)
+            else:
+                raise Exception('Unrecognised cavity type:', type(cavity))
             cls.number_operators.append(an_op)
             return an_op
 
-    class _NumberOperators():
+    class _NumberOperators(ABC):
 
         def __init__(self, atom, cavity, ketbras, verbose):
+
+            if verbose: print("\tCreating new _NumberOperators obj for setup.")
+
             self.atom = atom
             self.cavity = cavity
             self.ketbras = ketbras
             self.verbose = verbose
 
-            if verbose: print("\tCreating new _NumberOperators obj for setup.")
+        @abstractmethod
+        def get(self):
+            raise NotImplementedError()
+
+        def _is_compatible(self, atom, cavity):
+            if all([self.atom == atom, self.cavity == cavity]):
+                return True
+            else:
+                return False
+
+    class _NumberOperatorsCavitySingle(_NumberOperators):
+
+        def __init__(self, *args):
+            super().__init__(*args)
+
+            self.a = tensor(qeye(self.atom.M), destroy(self.cavity.N))
+            self.an = self.a.dag() * self.a
+
+        def get(self, t_series=None):
+            return self.an if not t_series else [self.an]*len(t_series)
+
+    class _NumberOperatorsCavityBiref(_NumberOperators):
+
+        def __init__(self, *args):
+            super().__init__(*args)
+
+            self.operator_series = []
 
             def kb(a, b):
                 return self.ketbras[str([a, b])]
@@ -436,8 +456,6 @@ class NumberOperatorsFactory(metaclass=Singleton):
             self.an_fast_2 = sum(map(lambda s: kb([s, 0, 1], [s, 0, 1]) + kb([s, 1, 1], [s, 1, 1]), all_atom_states))
             self.an_fast_3 = sum(map(lambda s: kb([s, 0, 1], [s, 1, 0]), all_atom_states))
             self.an_fast_4 = sum(map(lambda s: kb([s, 1, 0], [s, 0, 1]), all_atom_states))
-
-            self.operator_series = []
 
         def get(self, t_series, R_ZL):
             for t, R, deltaP, op_series in self.operator_series:
@@ -472,35 +490,89 @@ class NumberOperatorsFactory(metaclass=Singleton):
 
             return anRots
 
-        def _is_compatible(self, atom, cavity):
-            if all([self.atom == atom, self.cavity == cavity]):
-                return True
-            else:
-                return False
-
 class AtomicOperatorsFactory(metaclass=Singleton):
 
     atomic_operators = []
 
     @classmethod
-    def get(cls, atom, ketbras, verbose):
+    def get(cls, atom, cavity, ketbras, verbose):
         for at_op in cls.atomic_operators:
             if at_op._is_compatible(atom):
-                if verbose: print("\tFound suitable _AtomicOperators obj for setup.")
-                return at_op
+                if (type(cavity)==Cavity and type(at_op)==cls._AtomicOperatorsCavitySingle) or \
+                   (type(cavity)==CavityBiref and type(at_op)==cls._AtomicOperatorsCavityBiref):
+                    if verbose: print("\tFound suitable _AtomicOperators obj for setup.")
+                    return at_op
         else:
-            at_op = cls._AtomicOperators(atom, ketbras, verbose)
+            if type(cavity)==Cavity:
+                at_op = cls._AtomicOperatorsCavitySingle(atom, ketbras, verbose)
+            elif type(cavity)==CavityBiref:
+                at_op = cls._AtomicOperatorsCavityBiref(atom, ketbras, verbose)
+            else:
+                raise Exception('Unrecognised cavity type:', type(cavity))
             cls.atomic_operators.append(at_op)
             return at_op
 
     class _AtomicOperators():
 
         def __init__(self, atom, ketbras, verbose):
+            if verbose: print("\tCreating new _AtomicOperators obj for setup.")
+
             self.atom = atom
             self.ketbras = ketbras
             self.verbose = verbose
 
-            if verbose: print("\tCreating new _AtomicOperators obj for setup.")
+        def get_at_op(self, states=[]):
+            if type(states) != list:
+                states = [states]
+            if not states:
+                return list(self.at_ops.values())
+            else:
+                try:
+                    return [self.at_ops[s] for s in states]
+                except KeyError:
+                    raise KeyError('Invalid atomic state entered.  Valid options are ', list(self.at_ops))
+
+        def get_sp_op(self):
+            return self.sp_op
+
+        def _is_compatible(self, atom):
+            if self.atom == atom:
+                return True
+            else:
+                return False
+
+    class _AtomicOperatorsCavitySingle(_AtomicOperators):
+
+        def __init__(self, *args):
+            super().__init__(*args)
+
+            def kb(a, b):
+                return self.ketbras[str([a, b])]
+
+            atom_states=self.atom.atom_states
+            self.at_ops = {}
+            for s in atom_states:
+                self.at_ops[s]= kb([s,0], [s,0]) + kb([s,1], [s,1])
+
+            spont_decay_ops = []
+
+            for g,x,branching_ratio in self.atom.get_spontaneous_emission_channels():
+                try:
+                    spont_decay_ops.append(branching_ratio * np.sqrt(2 * self.atom.gamma) *
+                                           tensor(
+                                             basis(self.atom.M, atom_states[g]) * basis(self.atom.M, atom_states[x]).dag(),
+                                             qeye(Cavity.N)))
+                except KeyError:
+                    pass
+
+            self.sp_op = sum([x.dag() * x for x in spont_decay_ops])
+
+    class _AtomicOperatorsCavityBiref(_AtomicOperators):
+
+        def __init__(self, *args):
+            super().__init__(*args)
+
+            self.operator_series = []
 
             def kb(a, b):
                 return self.ketbras[str([a, b])]
@@ -524,26 +596,6 @@ class AtomicOperatorsFactory(metaclass=Singleton):
 
             self.sp_op = sum([x.dag() * x for x in spont_decay_ops])
 
-        def get_at_op(self, states=[]):
-            if type(states)!= list:
-                states = [states]
-            if not states:
-                return list(self.at_ops.values())
-            else:
-                try:
-                    return [self.at_ops[s] for s in states]
-                except KeyError:
-                    raise KeyError('Invalid atomic state entered.  Valid options are ', list(self.at_ops))
-
-        def get_sp_op(self):
-            return self.sp_op
-
-        def _is_compatible(self, atom):
-            if self.atom == atom:
-                return True
-            else:
-                return False
-
 class StatesFactory(metaclass=Singleton):
 
     states = []
@@ -555,14 +607,18 @@ class StatesFactory(metaclass=Singleton):
                 if verbose: print("\tFound suitable _States obj for setup.")
                 return s
         else:
-            s = cls._States(atom, cavity)
+            if type(cavity)==Cavity:
+                s = cls._StatesCavitySingle(atom, cavity)
+            elif type(cavity)==CavityBiref:
+                s = cls._StatesCavityBiref(atom, cavity)
+            else:
+                raise Exception('Unrecognised cavity type:', type(cavity))
             cls.states.append(s)
             return s
 
-    class _States():
+    class _States(ABC):
 
         def __init__(self, atom, cavity):
-
             self.atom = atom
             self.cavity = cavity
 
@@ -570,22 +626,63 @@ class StatesFactory(metaclass=Singleton):
             self.bras = {}
             self.ketbras = {}
 
-            def __ket(atom_state, cav_X, cav_Y):
-                return tensor(basis(self.atom.M, self.atom.atom_states[atom_state]),
-                              basis(self.cavity.N, cav_X),
-                              basis(self.cavity.N, cav_Y))
+            states = self._get_states_list()
 
-            def __bra(atom_state, cav_X, cav_Y):
-                return __ket(atom_state, cav_X, cav_Y).dag()
-
-            s = [list(self.atom.atom_states), self.cavity.cavity_states, self.cavity.cavity_states]
-            states = list(map(list, list(product(*s))))
             for state in states:
-                self.kets[str(state)] = __ket(*state)
-                self.bras[str(state)] = __bra(*state)
+                self.kets[str(state)] = self.ket(*state)
+                self.bras[str(state)] = self.bra(*state)
 
             for x in list(map(list, list(product(*[states, states])))):
-                self.ketbras[str(x)] = __ket(*x[0]) * __bra(*x[1])
+                self.ketbras[str(x)] = self.ket(*x[0]) * self.bra(*x[1])
+
+        @abstractmethod
+        def ket(self, *args):
+            raise NotImplementedError()
+
+        @abstractmethod
+        def bra(self, *args):
+            raise NotImplementedError()
+
+        @abstractmethod
+        def _get_states_list(self):
+            raise NotImplementedError
+
+        def _is_compatible(self, atom, cavity):
+            if (self.atom == atom) and (self.cavity == cavity):
+                return True
+            else:
+                return False
+
+    class _StatesCavitySingle(_States):
+
+        def ket(self, atom_state, cav):
+            try:
+                ket = self.kets[str([atom_state, cav])]
+            except KeyError:
+                ket = tensor(basis(self.atom.M, self.atom.atom_states[atom_state]),
+                             basis(self.cavity.N, cav))
+                self.kets[str([atom_state, cav])] = ket
+
+            return ket
+
+        def bra(self, atom_state, cav):
+            try:
+                bra = self.bras[str([atom_state, cav])]
+            except KeyError:
+                bra = tensor(basis(self.atom.M, self.atom.atom_states[atom_state]),
+                             basis(self.cavity.N, cav)).dag()
+                self.bras[str([atom_state, cav])] = bra
+
+            return bra
+
+        def _get_states_list(self):
+            s = [list(self.atom.atom_states), self.cavity.cavity_states]
+            return list(map(list, list(product(*s))))
+
+    class _StatesCavityBiref(_States):
+
+        def __init__(self, *args):
+            super().__init__(*args)
 
         def ket(self, atom_state, cav_X, cav_Y):
             try:
@@ -609,11 +706,9 @@ class StatesFactory(metaclass=Singleton):
 
             return bra
 
-        def _is_compatible(self, atom, cavity):
-            if (self.atom == atom) and (self.cavity == cavity):
-                return True
-            else:
-                return False
+        def _get_states_list(self):
+            s = [list(self.atom.atom_states), self.cavity.cavity_states, self.cavity.cavity_states]
+            return list(map(list, list(product(*s))))
 
 class CompiledHamiltonianFactory(metaclass=Singleton):
 
@@ -643,11 +738,18 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
             if verbose:
                 print("No suitable pre-compiled Hamiltonian found.  Generating Cython file...", end='')
                 t_start = time.time()
-            ham = cls._CompiledHamiltonian(atom, cavity, laser_couplings, cavity_couplings,
-                                           'ExperimentalRunner_Hamiltonian_{0}_{1}'.format(
-                                               len(cls.__compiled_hamiltonians),
-                                               os.getpid())
-                                           )
+
+            if type(cavity)==Cavity:
+                com_ham_cls = cls._CompiledHamiltonianCavitySingle
+            elif type(cavity)==CavityBiref:
+                com_ham_cls = cls._CompiledHamiltonianCavityBiref
+            else:
+                raise Exception('Unrecognised cavity type:', type(cavity))
+
+            ham = com_ham_cls(atom, cavity, laser_couplings, cavity_couplings,
+                              'ExperimentalRunner_Hamiltonian_{0}_{1}'.format(
+                              len(cls.__compiled_hamiltonians),
+                              os.getpid()))
             if verbose:
                 print("done.\n\tNew file is {0}.pyx.  Generated in {1} seconds.".format(ham.name,
                                                                                         np.round(time.time() - t_start, 3)))
@@ -660,7 +762,7 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
     def clear(cls):
         cls.__compiled_hamiltonians = []
 
-    class _CompiledHamiltonian:
+    class _CompiledHamiltonian(ABC):
 
         def __init__(self, atom, cavity, laser_couplings, cavity_couplings, name, verbose=False):
 
@@ -684,6 +786,203 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
             self.name = name
 
             self.tdfunc = self._compile(verbose)
+
+        @abstractmethod
+        def _configure_c_ops(self, args_only=False):
+            raise NotImplementedError()
+
+        @abstractmethod
+        def _configure_laser_couplings(self, args_only=False):
+            raise NotImplementedError()
+
+        @abstractmethod
+        def _configure_cavity_couplings(self, args_only=False):
+            raise NotImplementedError()
+
+        def _compile(self, verbose=False):
+            '''
+            Compile the .pyx file into an executable Cython function.
+            :param verbose: Whether to print compilation details.
+            :return: None
+            '''
+            self.hams = list(chain(*self.hams))
+
+            # Define the function we will overwrite in the global namespace to run the simuluation.
+            global cy_td_ode_rhs
+            def cy_td_ode_rhs():
+                raise NotImplementedError
+
+            try:
+                if verbose:
+                    rhs_generate(self.hams, self.c_op_list, args=self.args_hams, name=self.name, cleanup=False)
+                else:
+                    with io.StringIO() as buf, redirect_stderr(buf):
+                        rhs_generate(self.hams, self.c_op_list, args=self.args_hams, name=self.name, cleanup=False)
+            except:
+                if verbose:
+                    print("\n\tException in rhs comp...adding additional setups...", end='')
+                    # print('buf:\n', buf.getvalue())
+                for laser_couping in self.laser_couplings:
+                    if laser_couping.setup_pyx != [] or laser_couping.add_pyx != []:
+                        with fileinput.FileInput(self.name + '.pyx', inplace=True) as file:
+                            toWrite_setup = True
+                            toWrite_add = True
+                            for line in file:
+                                if '#' not in line and toWrite_setup:
+                                    for input in laser_couping.setup_pyx:
+                                        print(input, end='\n')
+                                    toWrite_setup = False
+                                if '@cython.cdivision(True)' in line and toWrite_add:
+                                    for input in laser_couping.add_pyx:
+                                        print(input, end='\n')
+                                    toWrite_add = False
+                                print(line, end='')
+                            fileinput.close()
+                if verbose:
+                    print("and trying rhs generate again...", end='')
+                code = compile('from ' + self.name + ' import cy_td_ode_rhs', '<string>', 'exec')
+                exec(code, globals())
+
+                return cy_td_ode_rhs
+
+        def _is_compatible(self, atom, cavity, laser_couplings, cavity_couplings):
+            '''
+            Check whether the Hamiltonian can be used to simulate the given system without
+            recompiling the .pyx file.
+            :param atom:
+            :param cavity:
+            :param laser_couplings:
+            :param cavity_couplings:
+            :return: Boolean
+            '''
+            can_use = True
+            if self.atom != atom:
+                can_use = False
+            if self.cavity != cavity:
+                can_use = False
+            for x,y in list(zip(self.laser_couplings, laser_couplings)) + \
+                       list(zip(self.cavity_couplings, cavity_couplings)):
+                if x != y:
+                    can_use = False
+            return can_use
+
+    class _CompiledHamiltonianCavitySingle(_CompiledHamiltonian):
+
+        def _configure_c_ops(self, args_only=False):
+            '''
+            Internal function to populate the list of collapse operators for the configured
+            atom and cavity.
+
+            :param args_only: Change only the configured arguments for the simulated Hamiltonians,
+                              not the Hamiltonians themselves.
+            :return: None
+            '''
+            if not args_only:
+                self.c_op_list = []
+
+                # Cavity decay
+                self.c_op_list.append(np.sqrt(2 * self.cavity.kappa) * tensor(qeye(self.atom.M), destroy(self.cavity.N)))
+
+                # Spontaneous emission
+                spontEmmChannels = self.atom.get_spontaneous_emission_channels()
+
+                spontDecayOps = []
+
+                for x in spontEmmChannels:
+                    try:
+                        spontDecayOps.append(x[2] * np.sqrt(2 * self.atom.gamma) *
+                                             tensor(
+                                                 basis(self.atom.M, self.atom.atom_states[x[0]]) *
+                                                 basis(self.atom.M, self.atom.atom_states[x[1]]).dag(),
+                                                 qeye(self.cavity.N)))
+                    except KeyError:
+                        pass
+
+                self.c_op_list += spontDecayOps
+
+        def _configure_laser_couplings(self, args_only=False):
+            '''
+            Internal function to configure the laser couplings by adding the required terms
+            to the list of Hamiltonians.
+
+            :param args_only: Change only the configured arguments for the simulated Hamiltonians,
+                              not the Hamiltonians themselves.
+            :return: None
+            '''
+            for laser_coupling in self.laser_couplings:
+                g, x = laser_coupling.g, laser_coupling.x
+                self.atom.check_coupling(g, x)
+
+                Omega = laser_coupling.omega0
+                Omega_lab = 'Omega_{0}{1}'.format(g, x)
+                omegaL = laser_coupling.deltaL
+                omegaL_lab = 'omegaL_{0}{1}'.format(g, x)
+
+                self.args_hams.update({Omega_lab: Omega,
+                                       omegaL_lab: omegaL})
+                self.args_hams.update(laser_coupling.args_ham)
+
+                if not args_only:
+                    pulse_shape = laser_coupling.pulse_shape
+
+                    def kb(a, b):
+                        return self.states.ketbras[str([a, b])]
+
+                    self.hams.append([
+                        [-(1/2) * (
+                                (kb([g, 0], [x, 0]) + kb([g, 1], [x, 1])) +
+                                (kb([x, 0], [g, 0]) + kb([x, 1], [g, 1]))
+                        ), '{0} * {1} * cos({2}*t)'.format(Omega_lab, pulse_shape, omegaL_lab)],
+                        [i * (1/2) * (
+                                (kb([x, 0], [g, 0]) + kb([x, 1], [g, 1])) -
+                                (kb([g, 0], [x, 0]) + kb([g, 1], [x, 1]))
+                        ), '{0} * {1} * sin({2}*t)'.format(Omega_lab, pulse_shape, omegaL_lab)]
+                    ])
+
+        def _configure_cavity_couplings(self, args_only=False):
+            '''
+            Internal function to configure the cavity couplings by adding the required terms
+            to the list of Hamiltonians.
+
+            :param args_only: Change only the configured arguments for the simulated Hamiltonians,
+                              not the Hamiltonians themselves.
+            :return: None
+            '''
+            for cavity_coupling in self.cavity_couplings:
+                g, x = cavity_coupling.g, cavity_coupling.x
+                self.atom.check_coupling(g, x)
+
+                g0 = cavity_coupling.g0
+                g0_lab = 'g0_{0}{1}'.format(g, x)
+
+                if g0 != self.cavity.g:
+                    print('\n\tWARNING: CavityCoupling does not have the same ' + \
+                          'atom-cavity coupling rate (g0/2pi={0}MHz) as the ' + \
+                          'configured cavity (g0/2pi={1}MHz) .  I hope you ' + \
+                          'know what you are doing...'.format(
+                              *[np.round(x / (2 * np.pi)) for x in [g0, self.cavity.g]]
+                          ))
+
+                omegaC = cavity_coupling.deltaC
+                omegaC_lab = 'omegaC_{0}{1}'.format(g, x)
+
+                self.args_hams.update({g0_lab: g0,
+                                       omegaC_lab: omegaC})
+
+                if not args_only:
+                    def kb(a, b):
+                        return self.states.ketbras[str([a, b])]
+
+                    self.hams.append([
+                        [-1 * (
+                                kb([g, 1], [x, 0]) + kb([x, 0], [g, 1])
+                        ), '{0} * cos({1}*t)'.format(g0_lab, omegaC_lab)],
+                        [-i * (
+                                kb([g, 1], [x, 0]) - kb([x, 0], [g, 1])
+                        ), '{0} * sin({1}*t)'.format(g0_lab, omegaC_lab)]
+                    ])
+
+    class _CompiledHamiltonianCavityBiref(_CompiledHamiltonian):
 
         def _configure_c_ops(self, args_only=False):
             '''
@@ -888,69 +1187,249 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
 
                     self.hams.append(H_coupling)
 
-        def _compile(self, verbose=False):
-            '''
-            Compile the .pyx file into an executable Cython function.
-            :param verbose: Whether to print compilation details.
-            :return: None
-            '''
-            self.hams = list(chain(*self.hams))
+class ExperimentalResultsFactory():
 
-            # Define the function we will overwrite in the global namespace to run the simuluation.
-            global cy_td_ode_rhs
-            def cy_td_ode_rhs():
-                raise NotImplementedError
+    @classmethod
+    def get(cls, output, compiled_hamiltonian, verbose=False):
+        if type(compiled_hamiltonian.cavity) == Cavity:
+            exp_res = cls._ExperimentalResultsSingle(output, compiled_hamiltonian, verbose=False)
+        elif type(compiled_hamiltonian.cavity) == CavityBiref:
+            exp_res = cls._ExperimentalResultsBiref(output, compiled_hamiltonian, verbose=False)
+        else:
+            raise Exception('Unrecognised cavity type:', type(compiled_hamiltonian.cavity))
 
-            try:
-                if verbose:
-                    rhs_generate(self.hams, self.c_op_list, args=self.args_hams, name=self.name, cleanup=False)
-                else:
-                    with io.StringIO() as buf, redirect_stderr(buf):
-                        rhs_generate(self.hams, self.c_op_list, args=self.args_hams, name=self.name, cleanup=False)
-            except:
-                if verbose:
-                    print("\n\tException in rhs comp...adding additional setups...", end='')
-                    # print('buf:\n', buf.getvalue())
-                for laser_couping in self.laser_couplings:
-                    if laser_couping.setup_pyx != [] or laser_couping.add_pyx != []:
-                        with fileinput.FileInput(self.name + '.pyx', inplace=True) as file:
-                            toWrite_setup = True
-                            toWrite_add = True
-                            for line in file:
-                                if '#' not in line and toWrite_setup:
-                                    for input in laser_couping.setup_pyx:
-                                        print(input, end='\n')
-                                    toWrite_setup = False
-                                if '@cython.cdivision(True)' in line and toWrite_add:
-                                    for input in laser_couping.add_pyx:
-                                        print(input, end='\n')
-                                    toWrite_add = False
-                                print(line, end='')
-                            fileinput.close()
-                if verbose:
-                    print("and trying rhs generate again...", end='')
-                code = compile('from ' + self.name + ' import cy_td_ode_rhs', '<string>', 'exec')
-                exec(code, globals())
+        return exp_res
 
-                return cy_td_ode_rhs
+    class _ExperimentalResults(ABC):
 
-        def _is_compatible(self, atom, cavity, laser_couplings, cavity_couplings):
-            '''
-            Check whether the Hamiltonian can be used to simulate the given system without
-            recompiling the .pyx file.
-            :param atom:
-            :param cavity:
-            :param laser_couplings:
-            :param cavity_couplings:
-            :return: Boolean
-            '''
-            can_use = True
-            if self.atom != atom:
-                can_use = False
-            if self.cavity != cavity:
-                can_use = False
-            for x,y in list(zip(self.laser_couplings, laser_couplings)) + \
-                       list(zip(self.cavity_couplings, cavity_couplings)):
-                if x != y:
-                    can_use = False
-            return can_use
+        def __init__(self, output, compiled_hamiltonian, verbose=False):
+            self.output = output
+            self.compiled_hamiltonian = compiled_hamiltonian
+            self.args = self.compiled_hamiltonian.args_hams
+            self.ketbras = self.compiled_hamiltonian.states.ketbras
+            self.verbose = verbose
+
+            self.emission_operators = EmissionOperatorsFactory.get(self.compiled_hamiltonian.atom,
+                                                                   self.compiled_hamiltonian.cavity,
+                                                                   self.ketbras,
+                                                                   self.verbose)
+            self.number_operators = NumberOperatorsFactory.get(self.compiled_hamiltonian.atom,
+                                                               self.compiled_hamiltonian.cavity,
+                                                               self.ketbras,
+                                                               self.verbose)
+            self.atomic_operators = AtomicOperatorsFactory.get(self.compiled_hamiltonian.atom,
+                                                               self.compiled_hamiltonian.cavity,
+                                                               self.ketbras,
+                                                               self.verbose)
+
+
+        def _get_output_states(self, i_output):
+            if not i_output:
+                out_states = self.output.states
+            elif type(i_output) == int:
+                out_states = self.output.states[i_output]
+            elif len(i_output) == 2:
+                out_states = self.output.states[i_output[0]:i_output[1]]
+            else:
+                raise TypeError('i_output must be [], an integer, or a list/tuple of length 2')
+            return out_states
+
+        @abstractmethod
+        def get_cavity_emission(self, *args):
+            raise NotImplementedError()
+
+        @abstractmethod
+        def get_cavity_number(self, *args):
+            raise NotImplementedError()
+
+        @abstractmethod
+        def get_atomic_population(self, *args):
+            raise NotImplementedError()
+
+        @abstractmethod
+        def get_total_spontaneous_emission(self, *args):
+            raise NotImplementedError()
+
+        #TODO: allow output to be customised, e.g. by plotting specified atomic states etc.
+        @abstractmethod
+        def plot(self, *args):
+            raise NotImplementedError()
+
+    class _ExperimentalResultsSingle(_ExperimentalResults):
+
+        def get_cavity_emission(self, i_output=[]):
+            return np.abs(expect(self.emission_operators.get(), self._get_output_states(i_output)))
+            em = self.emission_operators.get()
+            # return np.array([(x * em).tr() for x in self._get_output_states(i_output)])
+
+        def get_cavity_number(self, i_output=[]):
+            return np.abs(expect(self.number_operators.get(), self._get_output_states(i_output)))
+            # an = self.number_operators.get()
+            # return np.array([(x * an).tr() for x in self._get_output_states(i_output)])
+
+        def get_atomic_population(self, states=[], i_output=[]):
+            at_ops = self.atomic_operators.get_at_op(states)
+            return np.abs(expect(at_ops, self._get_output_states(i_output)))
+
+        def get_total_spontaneous_emission(self, i_output=[]):
+            sp_op = self.atomic_operators.get_sp_op()
+            return expect(sp_op, self._get_output_states(i_output))
+
+        def plot(self):
+            exp_an = self.get_cavity_number()
+            exp_em = self.get_cavity_emission()
+
+            exp_sp = self.get_total_spontaneous_emission()
+
+            exp_atM, exp_atX, exp_atP, exp_atD = self.get_atomic_population(['gM', 'x0', 'gP', 'd'])
+
+            t = self.output.times
+            tStep = np.mean(np.ediff1d(t))
+
+            n_ph = np.trapz(exp_em, dx=tStep)
+            n_sp = np.trapz(exp_sp, dx=tStep)
+
+            plt.rcParams['text.usetex'] = True
+
+            print('Photon emission:', np.round(n_ph, 3))
+            print('Spontaneous emission:', np.round(n_sp, 3))
+
+            # Plot the results
+            f1, ((a1a, a1b)) = plt.subplots(1, 2, sharex=True, figsize=(12, 11. / 4))
+
+            a1a.set_title('\\textbf{Cavity mode population}', fontsize=16)
+            a1b.set_title('\\textbf{Cavity emission rate} ($1/\mu s$)', fontsize=16, fontweight='bold')
+
+            ###
+            axA, axB = a1a, a1b
+
+            axA.plot(t, exp_an, 'b')
+            axA.set_ylabel('Cavity mode population')
+
+            axB.plot(t, exp_em, 'g')
+            axB.set_ylabel('Cavity emission rate, $1/\mu s$')
+
+            ###
+
+            f2, (a) = plt.subplots(1, 1, sharex=True, figsize=(12, 11 / 4))
+
+            a.set_title('\\textbf{Atomic state}', fontsize=16)
+
+            a.plot(t, exp_atM, 'b', label='$gM$')
+            a.plot(t, exp_atP, 'g', label='$gP$')
+            a.plot(t, exp_atX, '--r', label='$x0$')
+            a.plot(t, exp_atD, '--y', label='$d$')
+
+            a.set_xlabel('Time, $\mu s$')
+            a.set_ylabel('Population')
+            a.legend(loc=2)
+
+            return f1, f2
+
+    class _ExperimentalResultsBiref(_ExperimentalResults):
+
+        def get_cavity_emission(self, R_ZL, i_output=[]):
+            if type(R_ZL) != np.matrix:
+                raise ValueError("R_ZL must be a numpy matrix.")
+            emP_t, emM_t = self.emission_operators.get(self.output.times, R_ZL)
+
+            emP, emM = np.abs(np.array(
+                [expect(list(an_list), state) for an_list, state in
+                 zip(zip(emP_t, emM_t), self._get_output_states(i_output))]
+            )).T
+
+            return emP, emM
+
+            return list(zip(*[iter(ems)] * 2))
+
+        def get_cavity_number(self, R_ZL, i_output=[]):
+            if type(R_ZL) != np.matrix:
+                raise ValueError("R_ZL must be a numpy matrix.")
+            anP_t, anM_t = self.number_operators.get(self.output.times, R_ZL)
+
+            anP, anM = np.abs(np.array(
+                [expect(list(an_list), state) for an_list, state in
+                 zip(zip(anP_t, anM_t), self._get_output_states(i_output))]
+            )).T
+
+            return anP, anM
+
+        def get_atomic_population(self, states=[], i_output=[]):
+            at_ops = self.atomic_operators.get_at_op(states)
+            return np.abs(expect(at_ops, self._get_output_states(i_output)))
+
+        def get_total_spontaneous_emission(self, i_output=[]):
+            sp_op = self.atomic_operators.get_sp_op()
+            return expect(sp_op, self._get_output_states(i_output))
+
+        def plot(self):
+            exp_anX, exp_anY = self.get_cavity_number(self.compiled_hamiltonian.cavity.R_CL)
+            exp_emX, exp_emY = self.get_cavity_emission(self.compiled_hamiltonian.cavity.R_CL)
+            exp_anP, exp_anM = self.get_cavity_number(self.compiled_hamiltonian.atom.R_AL)
+            exp_emP, exp_emM = self.get_cavity_emission(self.compiled_hamiltonian.atom.R_AL)
+
+            exp_sp = self.get_total_spontaneous_emission()
+
+            exp_atM, exp_atX, exp_atP, exp_atD = self.get_atomic_population(['gM', 'x0', 'gP', 'd'])
+
+            t = self.output.times
+            tStep = np.mean(np.ediff1d(t))
+
+            n_X = np.trapz(exp_emX, dx=tStep)
+            n_Y = np.trapz(exp_emY, dx=tStep)
+            n_ph = n_X + n_Y
+            n_sp = np.trapz(exp_sp, dx=tStep)
+
+            plt.rcParams['text.usetex'] = True
+
+            print('Photon emission:', np.round(n_ph, 3))
+            print('Photon emission in |X>, |Y>:', np.round(n_X, 3), np.round(n_Y, 3))
+            print('Spontaneous emission:', np.round(n_sp, 3))
+
+            # Plot the results
+            f1, ((a1a, a1b),
+                 (a2a, a2b)) = plt.subplots(2, 2, sharex=True, figsize=(12, 11. / 2))
+
+            a1a.set_title('\\textbf{Cavity mode population}', fontsize=16)
+            a1b.set_title('\\textbf{Cavity emission rate} ($1/\mu s$)', fontsize=16, fontweight='bold')
+
+            ###
+            axA, axB = a1a, a1b
+
+            axA.plot(t, exp_anP, 'b', label='$+ (\sigma^{+})$')
+            axA.plot(t, exp_anM, 'g', label='$- (\sigma^{-})$')
+            axA.set_ylabel('Cavity mode population')
+            axA.legend(loc=1)
+
+            axB.plot(t, exp_emP, 'b', label='$+ (\sigma^{+})$')
+            axB.plot(t, exp_emM, 'g', label='$- (\sigma^{-})$')
+            axB.set_ylabel('Cavity emission rate, $1/\mu s$')
+            axB.legend(loc=1)
+
+            ###
+            axA, axB = a2a, a2b
+
+            axA.plot(t, exp_anX, 'b', label='$X$')
+            axA.plot(t, exp_anY, 'g', label='$Y$')
+            axA.set_ylabel('Cavity mode population')
+            axA.legend(loc=1)
+
+            axB.plot(t, exp_emX, 'b', label='$X$')
+            axB.plot(t, exp_emY, 'g', label='$Y$')
+            axB.set_ylabel('Cavity emission rate, $1/\mu s$')
+            axB.legend(loc=1)
+
+            f2, (a) = plt.subplots(1, 1, sharex=True, figsize=(12, 11 / 4))
+
+            a.set_title('\\textbf{Atomic state}', fontsize=16)
+
+            a.plot(t, exp_atM, 'b', label='$gM$')
+            a.plot(t, exp_atP, 'g', label='$gP$')
+            a.plot(t, exp_atX, '--r', label='$x0$')
+            a.plot(t, exp_atD, '--y', label='$d$')
+
+            a.set_xlabel('Time, $\mu s$')
+            a.set_ylabel('Population')
+            a.legend(loc=2)
+
+            return f1, f2
