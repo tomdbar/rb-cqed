@@ -91,6 +91,7 @@ class Atom87Rb(RunnerDataClass):
         params_dict = self.__load_params(params_file)
         self.__configure_transition_strengths(params_dict)
         self.__configure_detunings(params_dict, x_zero_energy_state)
+        self.__configure_rotation_matrix()
 
     def __configure_states(self):
         # Default levels for the 87Rb D2 line.
@@ -213,6 +214,16 @@ class Atom87Rb(RunnerDataClass):
         for g in self.g_states.keys():
             self.g_detunings[g] = get_ground_splitting(g)
 
+    def __configure_rotation_matrix(self):
+        if type(self.R_AL) is list:
+            self.R_AL = np.matrix(self.R_AL)
+
+        # Check the rotation matrices provided are unitary!
+        if self.R_AL.shape != (2,2):
+            raise Exception('Invalid value passed for R_AL.  Rotation matrices must have dimension (2,2).')
+        if not np.allclose(np.eye(self.R_AL.shape[0]), self.R_AL.H * self.R_AL):
+            raise Exception('Invalid value passed for R_AL.  Rotation matrices must be unitary.')
+
     def get_couplings(self, deltaL, deltaM) -> list:
         couplings = []
         for g,x in product(self.g_states.keys(), self.x_states.keys()):
@@ -307,6 +318,7 @@ class Atom4lvl(RunnerDataClass):
         if self.transition_strengths == {}:
             self.__configure_transition_strengths()
         self.__configure_detunings()
+        self.__configure_rotation_matrix()
 
     def __configure_states(self):
         # Default levels for the 87Rb D2 line.
@@ -367,6 +379,16 @@ class Atom4lvl(RunnerDataClass):
             self.g_detunings[g] = 0
         for x in self.x_states.keys():
             self.x_detunings[x] = 0
+
+    def __configure_rotation_matrix(self):
+        if type(self.R_AL) is list:
+            self.R_AL = np.matrix(self.R_AL)
+
+        # Check the rotation matrices provided are unitary!
+        if self.R_AL.shape != (2,2):
+            raise Exception('Invalid value passed for R_AL.  Rotation matrices must have dimension (2,2).')
+        if not np.allclose(np.eye(self.R_AL.shape[0]), self.R_AL.H * self.R_AL):
+            raise Exception('Invalid value passed for R_AL.  Rotation matrices must be unitary.')
 
     def get_couplings(self, deltaL, deltaM) -> list:
         couplings = []
@@ -471,6 +493,18 @@ class CavityBiref(RunnerDataClass):
     def __post_init__(self):
         self.cavity_states += [0,1]
         self.N = len(self.cavity_states)
+
+        if type(self.R_CL) is list:
+            self.R_CL = np.matrix(self.R_CL)
+        if type(self.R_ML) is list:
+            self.R_ML = np.matrix(self.R_ML)
+
+        # Check the rotation matrices provided are unitary!
+        for R, lab in zip([self.R_CL, self.R_ML],['R_CL', 'R_ML']):
+            if R.shape != (2,2):
+                raise Exception('Invalid value passed for {0}.  Rotation matrices must have dimension (2,2).'.format(lab))
+            if not np.allclose(np.eye(R.shape[0]), R.H * R):
+                raise Exception('Invalid value passed for {0}.  Rotation matrices must be unitary.'.format(lab))
 
     def _eq_ignore_fields(self):
         return ['g']
@@ -1206,7 +1240,9 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
                                 ]
 
                             else:
-                                raise Exception("deltaM must be +/-1.  Transition {0} -> {1} has {2}.".format(g, x, deltaM))
+                                raise Exception(textwrap.dedent('''\
+                                deltaM must be +/-1 for a cavity-coupled transition.\
+                                Transition {0} -> {1} has {2}.'''.format(g, x, deltaM)))
 
                             self.hams.append(H_coupling)
 
@@ -1282,7 +1318,15 @@ class ExperimentalResultsFactory():
         def plot(self, *args):
             raise NotImplementedError()
 
+        @abstractmethod
+        def _plot_cavity_summary(self, *args):
+            raise NotImplementedError()
+
         def _plot_atomic_populations(self, atom_states):
+            # If no atom_states were asked for explicitly, return as we don't want this plot.
+            if atom_states == []:
+                return None
+
             t = self.output.times
 
             # Get the atom and it's states for configuring the plot of atomic populations.
@@ -1322,18 +1366,18 @@ class ExperimentalResultsFactory():
             exp_at_ground = zip(g_levels_plt_list, self.get_atomic_population(g_levels_plt_list))
             exp_at_excited = zip(x_levels_plt_list, self.get_atomic_population(x_levels_plt_list))
 
-            f, (a) = plt.subplots(1, 1, sharex=True, figsize=(12, 11 / 4))
+            f, (ax) = plt.subplots(1, 1, sharex=True, figsize=(12, 11 / 4))
 
-            a.set_title('\\textbf{Atomic state}', fontsize=16)
+            ax.set_title('\\textbf{Atomic state}', fontsize=16)
 
             for lab, exp_at in exp_at_ground:
-                a.plot(t, exp_at, label='${}$'.format(lab))
+                ax.plot(t, exp_at, label='${}$'.format(lab))
             for lab, exp_at in exp_at_excited:
-                a.plot(t, exp_at, '--', label='${}$'.format(lab))
+                ax.plot(t, exp_at, '--', label='${}$'.format(lab))
 
-            a.set_xlabel('Time, $\mu s$')
-            a.set_ylabel('Population')
-            a.legend(loc=1)
+            ax.set_xlabel('Time')
+            ax.set_ylabel('Population')
+            ax.legend(loc=1)
 
             return f
 
@@ -1341,13 +1385,9 @@ class ExperimentalResultsFactory():
 
         def get_cavity_emission(self, i_output=[]):
             return np.abs(expect(self.emission_operators.get(), self._get_output_states(i_output)))
-            em = self.emission_operators.get()
-            # return np.array([(x * em).tr() for x in self._get_output_states(i_output)])
 
         def get_cavity_number(self, i_output=[]):
             return np.abs(expect(self.number_operators.get(), self._get_output_states(i_output)))
-            # an = self.number_operators.get()
-            # return np.array([(x * an).tr() for x in self._get_output_states(i_output)])
 
         def get_atomic_population(self, states=[], i_output=[]):
             at_ops = self.atomic_operators.get_at_op(states)
@@ -1357,9 +1397,29 @@ class ExperimentalResultsFactory():
             sp_op = self.atomic_operators.get_sp_op()
             return expect(sp_op, self._get_output_states(i_output))
 
-        def plot(self, atom_states=None):
+        def _plot_cavity_summary(self):
             exp_an = self.get_cavity_number()
             exp_em = self.get_cavity_emission()
+
+            t = self.output.times
+
+            # Plot the results
+            f, ((ax1, ax2)) = plt.subplots(1, 2, sharex=True, figsize=(12, 11. / 4))
+
+            ax1.set_title('\\textbf{Cavity population}', fontsize=16)
+            ax2.set_title('\\textbf{Cavity emission}', fontsize=16, fontweight='bold')
+
+            ax1.plot(t, exp_an)
+            ax1.set_ylabel('Cavity mode population')
+
+            ax2.plot(t, exp_em)
+            ax2.set_ylabel('Cavity emission rate, $1/\mu s$')
+
+            return f, [[exp_an], [exp_em]]
+
+        def plot(self, atom_states=None):
+            f1, [[exp_an], [exp_em]] = self._plot_cavity_summary()
+            f2 = self._plot_atomic_populations(atom_states)
 
             exp_sp = self.get_total_spontaneous_emission()
 
@@ -1369,31 +1429,23 @@ class ExperimentalResultsFactory():
             n_ph = np.trapz(exp_em, dx=tStep)
             n_sp = np.trapz(exp_sp, dx=tStep)
 
-            print('Photon emission:', np.round(n_ph, 3))
-            print('Spontaneous emission:', np.round(n_sp, 3))
+            ph_em_str = '\\textbf{' + 'Photon emission: {}'.format(np.round(n_ph, 3)) + '}'
+            sp_em_str = '\\textbf{' + 'Spontaneous emission: {}'.format(np.round(n_sp, 3)) + '}'
 
-            # Plot the results
-            f1, ((a1a, a1b)) = plt.subplots(1, 2, sharex=True, figsize=(12, 11. / 4))
+            summary_str = "\n".join([ph_em_str, sp_em_str])
 
-            a1a.set_title('\\textbf{Cavity mode population}', fontsize=16)
-            a1b.set_title('\\textbf{Cavity emission rate} ($1/\mu s$)', fontsize=16, fontweight='bold')
+            a1x0 = f1.axes[0].get_position().x0
 
-            ###
-            axA, axB = a1a, a1b
-
-            axA.plot(t, exp_an)
-            axA.set_ylabel('Cavity mode population')
-
-            axB.plot(t, exp_em)
-            axB.set_ylabel('Cavity emission rate, $1/\mu s$')
-
-            ###
-
-            f2 = self._plot_atomic_populations(atom_states)
+            f1.text(a1x0, 1.02, summary_str, wrap=True,
+                            fontsize=14, style='oblique',
+                            verticalalignment='bottom', horizontalalignment='left', multialignment='left',
+                            bbox={'facecolor':'#EAEAF2', # sns darkgrid default background color
+                                  'edgecolor':'black',
+                                  'capstyle':'round'})
 
             return f1, f2
 
-    # TODO: allow nested lists to be passed to atom-_states for producing multiple plots.
+    # TODO: allow nested lists to be passed to atom-states for producing multiple plots.
     class _ExperimentalResultsBiref(_ExperimentalResults):
 
         def get_cavity_emission(self, R_ZL, i_output=[]):
@@ -1429,72 +1481,206 @@ class ExperimentalResultsFactory():
         def get_total_spontaneous_emission(self, i_output=[]):
             sp_op = self.atomic_operators.get_sp_op()
             return expect(sp_op, self._get_output_states(i_output))
+        
+        def _plot_cavity_summary(self, R_ZL, basis_name, basis_labels):
+            exp_an1, exp_an2 = self.get_cavity_number(R_ZL)
+            exp_em1, exp_em2 = self.get_cavity_emission(R_ZL)
 
-        def plot(self, atom_states=None):
+            lab1, lab2 = basis_labels
+
+            t = self.output.times
+
+            # Plot the results
+            f, ((ax1, ax2)) = plt.subplots(1, 2, sharex=True, figsize=(12, 11. / 4))
+
+            ax1.set_title(basis_name,loc='left',fontweight='bold',fontsize=14)
+
+            ax1.plot(t, exp_an1, label=lab1)
+            ax1.plot(t, exp_an2, label=lab2)
+            ax1.set_ylabel('Cavity mode population')
+            ax1.legend(loc=1)
+
+            ax2.plot(t, exp_em1, label=lab1)
+            ax2.plot(t, exp_em2, label=lab2)
+            ax2.set_ylabel('Cavity emission rate, $1/\mu s$')
+            ax2.legend(loc=1)
+
+            return f, [[exp_an1, exp_an2], [exp_em1, exp_em2]]
+
+        def plot(self, atom_states=None, pol_bases=['atomic', 'cavity']):
             '''
             Plot a summary of the simulation results.
             :param atom_states: The displayed atomic populations.  Default behaviour is automatically configured
             to choose sensible states.
             :return:
             '''
-            #TODO: relabel plots in terms of the cavity basis, mirror basis, atomic basis etc.
-            exp_anX, exp_anY = self.get_cavity_number(self.compiled_hamiltonian.cavity.R_CL)
-            exp_emX, exp_emY = self.get_cavity_emission(self.compiled_hamiltonian.cavity.R_CL)
-            exp_anP, exp_anM = self.get_cavity_number(self.compiled_hamiltonian.atom.R_AL)
-            exp_emP, exp_emM = self.get_cavity_emission(self.compiled_hamiltonian.atom.R_AL)
+            configured_bases_aliases = {'cavity':['cavity','cav','c'],
+                                        'atomic':['atomic','atom','a'],
+                                        'lab':['lab', 'linear', 'l'],
+                                        'circ':['circ', 'circular']}
 
-            exp_sp = self.get_total_spontaneous_emission()
+            def __get_pol_basis_info(basis):
+                if basis in configured_bases_aliases['cavity']:
+                    return self.compiled_hamiltonian.cavity.R_CL, 'Cavity basis', ['X','Y']
+                elif basis in configured_bases_aliases['atomic']:
+                    return self.compiled_hamiltonian.atom.R_AL, 'Atomic basis', ['$+$','$-$']
+                elif basis in configured_bases_aliases['lab']:
+                    return np.matrix([[1, 0],[0, 1]]), 'Lab basis', ['H','V']
+                elif basis in configured_bases_aliases['circ']:
+                    return np.sqrt(1 / 2) * np.matrix([[1, i],[i, 1]]), 'Circularly polarised basis', ['$\sigma^{+}$', '$\sigma^{-}$']
+                else:
+                    raise KeyError(textwrap.dedent('''\
+                        Invalid polarisation bases keyword entered: {0}.\
+                        Valid values are {1}.'''.format(basis, list(configured_bases_aliases.values()))))
 
-            t = self.output.times
-            tStep = np.mean(np.ediff1d(t))
+            pol_bases_info = []
+            for basis in pol_bases:
+                if type(basis) is str:
+                    pol_bases_info.append(__get_pol_basis_info(basis))
+                elif type(basis) in [list,tuple]:
+                    #TODO: check/force custom rotation matrix to be unitary?
+                    pol_bases_info.append(basis)
+                else:
+                    raise Exception(textwrap.dedent('''\
+                        Unrecognised pol_bases option {0}.  Should be either:\
+                        \t- A recognised polarisation basis keyword: {1}\
+                        \t- A list of the form [[2x2 Rotation matrix from basis to lab]\
+                                                Basis name
+                                                [Basis state label 1, Basis state label 2]]'''.format(basis,
+                                                                                                      list(configured_bases_aliases.values()))))
 
-            n_X = np.trapz(exp_emX, dx=tStep)
-            n_Y = np.trapz(exp_emY, dx=tStep)
-            n_ph = n_X + n_Y
-            n_sp = np.trapz(exp_sp, dx=tStep)
+            f_list = []
+            emm_summary_str_list = []
+            n_ph = None
 
-            plt.rcParams['text.usetex'] = True
+            tStep = np.mean(np.ediff1d(self.output.times))
 
-            print('Photon emission:', np.round(n_ph, 3))
-            print('Photon emission in |X>, |Y>:', np.round(n_X, 3), np.round(n_Y, 3))
-            print('Spontaneous emission:', np.round(n_sp, 3))
+            # Helper function to format basis labels into the string format to show as ket's in the plots.
+            def ketstr(s, cap="$"):
+                if s[0] == '$':
+                    s = s[1:]
+                if s[-1] == '$':
+                    s = s[:-1]
+                return cap + "|" + s + "\\rangle" + cap
 
-            # Plot the results
-            f1, ((a1a, a1b),
-                 (a2a, a2b)) = plt.subplots(2, 2, sharex=True, figsize=(12, 11. / 2))
+            for R_ZL, basis_name, basis_labels in pol_bases_info:
 
-            a1a.set_title('\\textbf{Cavity mode population}', fontsize=16)
-            a1b.set_title('\\textbf{Cavity emission rate} ($1/\mu s$)', fontsize=16, fontweight='bold')
+                basis_labels = [ketstr(x) for x in basis_labels]
 
-            ###
-            axA, axB = a1a, a1b
+                f, [[exp_an1, exp_an2], [exp_em1, exp_em2]] = self._plot_cavity_summary(R_ZL, basis_name, basis_labels)
+                f_list.append(f)
+                n_1 = np.trapz(exp_em1, dx=tStep)
+                n_2 = np.trapz(exp_em2, dx=tStep)
+                if n_ph==None:
+                    n_ph = n_1 + n_2
 
-            axA.plot(t, exp_anP, label='$+ (\sigma^{+})$')
-            axA.plot(t, exp_anM, label='$- (\sigma^{-})$')
-            axA.set_ylabel('Cavity mode population')
-            axA.legend(loc=1)
+                emm_summary_str_list.append('$\\rightarrow$ Photon emission in {0}, {1}: {2}, {3}'.format(
+                    basis_labels[0], basis_labels[1], np.round(n_1, 3), np.round(n_2, 3)))
 
-            axB.plot(t, exp_emP, label='$+ (\sigma^{+})$')
-            axB.plot(t, exp_emM, label='$- (\sigma^{-})$')
-            axB.set_ylabel('Cavity emission rate, $1/\mu s$')
-            axB.legend(loc=1)
-
-            ###
-            axA, axB = a2a, a2b
-
-            axA.plot(t, exp_anX, label='$X$')
-            axA.plot(t, exp_anY, label='$Y$')
-            axA.set_ylabel('Cavity mode population')
-            axA.legend(loc=1)
-
-            axB.plot(t, exp_emX, label='$X$')
-            axB.plot(t, exp_emY, label='$Y$')
-            axB.set_ylabel('Cavity emission rate, $1/\mu s$')
-            axB.legend(loc=1)
-
+            # Plot the atomic states summary.
             f2 = self._plot_atomic_populations(atom_states)
 
-            return f1, f2
+            # If a cavity summary plot exists:
+            #   1. add the column titles to the first figure,
+            #   2. add the summary text of the photon emission.
+            if f_list != []:
+                ax1, ax2 = f_list[0].axes
+                ttl1 = ax1.set_title('\\textbf{Cavity population}', fontsize=16, fontweight='bold')
+                ttl2 = ax2.set_title('\\textbf{Cavity emission}', fontsize=16, fontweight='bold')
+                for ttl in [ttl1, ttl2]:
+                    ttl.set_position([.5, 1.08])
+
+                exp_sp = self.get_total_spontaneous_emission()
+                n_sp = np.trapz(exp_sp, dx=tStep)
+
+                ph_em_str = '\\textbf{' + 'Total photon emission: {}'.format(np.round(n_ph, 3)) + '}'
+                sp_em_str = '\\textbf{' + 'Total spontaneous emission: {}'.format(np.round(n_sp, 3)) + '}'
+
+                # Create summary string out of flatten list of summaries
+                summary_str = "\n".join([item for sublist in [[ph_em_str], emm_summary_str_list, [sp_em_str]] for item in sublist])
+
+                if f_list != []:
+                    f_top = f_list[0]
+                else:
+                    f_top = f2
+
+                x0 = f_top.axes[0].get_position().x0
+
+                f_top.text(x0, 1.09, summary_str, wrap=True,
+                           fontsize=14, style='oblique', usetex=True,
+                           verticalalignment='bottom', horizontalalignment='left', multialignment='left',
+                           bbox={'facecolor': '#EAEAF2',  # sns darkgrid default background color
+                                 'edgecolor': 'black',
+                                 'capstyle': 'round'})
+
+            return f_list + [f2]
+
+
+        # def plot(self, atom_states=None, pol_bases=None):
+        #     '''
+        #     Plot a summary of the simulation results.
+        #     :param atom_states: The displayed atomic populations.  Default behaviour is automatically configured
+        #     to choose sensible states.
+        #     :return:
+        #     '''
+        #     #TODO: relabel plots in terms of the cavity basis, mirror basis, atomic basis etc.
+        #     exp_anX, exp_anY = self.get_cavity_number(self.compiled_hamiltonian.cavity.R_CL)
+        #     exp_emX, exp_emY = self.get_cavity_emission(self.compiled_hamiltonian.cavity.R_CL)
+        #     exp_anP, exp_anM = self.get_cavity_number(self.compiled_hamiltonian.atom.R_AL)
+        #     exp_emP, exp_emM = self.get_cavity_emission(self.compiled_hamiltonian.atom.R_AL)
+        #
+        #     exp_sp = self.get_total_spontaneous_emission()
+        #
+        #     t = self.output.times
+        #     tStep = np.mean(np.ediff1d(t))
+        #
+        #     n_X = np.trapz(exp_emX, dx=tStep)
+        #     n_Y = np.trapz(exp_emY, dx=tStep)
+        #     n_ph = n_X + n_Y
+        #     n_sp = np.trapz(exp_sp, dx=tStep)
+        #
+        #
+        #
+        #     print('Photon emission:', np.round(n_ph, 3))
+        #     print('Photon emission in |X>, |Y>:', np.round(n_X, 3), np.round(n_Y, 3))
+        #     print('Spontaneous emission:', np.round(n_sp, 3))
+        #
+        #     # Plot the results
+        #     f1, ((a1a, a1b),
+        #          (a2a, a2b)) = plt.subplots(2, 2, sharex=True, figsize=(12, 11. / 2))
+        #
+        #     a1a.set_title('\\textbf{Cavity population}', fontsize=16)
+        #     a1b.set_title('\\textbf{Cavity emission}', fontsize=16, fontweight='bold')
+        #
+        #     ###
+        #     axA, axB = a1a, a1b
+        #
+        #     axA.plot(t, exp_anP, label='$+ (\sigma^{+})$')
+        #     axA.plot(t, exp_anM, label='$- (\sigma^{-})$')
+        #     axA.set_ylabel('Cavity mode population')
+        #     axA.legend(loc=1)
+        #
+        #     axB.plot(t, exp_emP, label='$+ (\sigma^{+})$')
+        #     axB.plot(t, exp_emM, label='$- (\sigma^{-})$')
+        #     axB.set_ylabel('Cavity emission rate, $1/\mu s$')
+        #     axB.legend(loc=1)
+        #
+        #     ###
+        #     axA, axB = a2a, a2b
+        #
+        #     axA.plot(t, exp_anX, label='$X$')
+        #     axA.plot(t, exp_anY, label='$Y$')
+        #     axA.set_ylabel('Cavity mode population')
+        #     axA.legend(loc=1)
+        #
+        #     axB.plot(t, exp_emX, label='$X$')
+        #     axB.plot(t, exp_emY, label='$Y$')
+        #     axB.set_ylabel('Cavity emission rate, $1/\mu s$')
+        #     axB.legend(loc=1)
+        #
+        #     f2 = self._plot_atomic_populations(atom_states)
+        #
+        #     return f1, f2
 
 '''
 This is just some notes on the below.  Essentially I want to minimise re-computation of the operators I track through
