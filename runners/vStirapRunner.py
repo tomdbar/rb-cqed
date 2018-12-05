@@ -132,19 +132,21 @@ class Atom87Rb(RunnerDataClass):
                     '''.format(s))
                 )
             # If configured_states contains unrecognised states then throw an error because I don't know what to do!
-            if set(self.configured_states).difference(g_lvls + x_lvls) !=[]:
+            if list(set(self.configured_states).difference(g_lvls + x_lvls)) !=[]:
                 raise Exception(textwrap.dedent('''\
                     Atom87Rb.configured_states contains states not recognised for 87Rb.
                     \tUnrecognised states: {0}
                     \tAllowed states: {1}\
-                    '''.format(self.configured_states.difference(g_lvls + x_lvls), g_lvls + x_lvls))
+                    '''.format(list(self.configured_states.difference(g_lvls + x_lvls)), g_lvls + x_lvls))
                 )
 
         # Now we know the configured states are sensible and have warned about any assumptions we are making.
+        lvl_idx = 0
         for states, lvls in zip([self.g_states, self.x_states], [g_lvls, x_lvls]):
-            # configured_lvls = set(self.configured_states).intersection(lvls)
-            for k, v in zip(lvls, range(len(lvls))):
-                states[k] = v
+            configured_lvls = [lvl for lvl in lvls if lvl in self.configured_states]
+            for lvl in configured_lvls:
+                states[lvl] = lvl_idx
+                lvl_idx += 1
         self.M = len(self.configured_states)
 
     def __load_params(self, params_file):
@@ -337,28 +339,22 @@ class Atom4lvl(RunnerDataClass):
                     '''.format(s))
                 )
             # If configured_states contains unrecognised states then throw an error because I don't know what to do!
-            if set(self.configured_states).difference(g_lvls + x_lvls) !=[]:
+            if list(set(self.configured_states).difference(g_lvls + x_lvls)) !=[]:
                 raise Exception(textwrap.dedent('''\
                     Atom4lvl.configured_states contains states not recognised for 87Rb.
                     \tUnrecognised states: {0}
                     \tAllowed states: {1}\
-                    '''.format(self.configured_states.difference(g_lvls + x_lvls), g_lvls + x_lvls))
+                    '''.format(list(set(self.configured_states).difference(g_lvls + x_lvls)), g_lvls + x_lvls))
                 )
 
         # Now we know the configured states are sensible and have warned about any assumptions we are making.
+        lvl_idx = 0
         for states, lvls in zip([self.g_states, self.x_states], [g_lvls, x_lvls]):
-            # configured_lvls = set(self.configured_states).intersection(lvls)
-            for k, v in zip(lvls, range(len(lvls))):
-                states[k] = v
+            configured_lvls = [lvl for lvl in lvls if lvl in self.configured_states]
+            for lvl in configured_lvls:
+                states[lvl] = lvl_idx
+                lvl_idx+=1
         self.M = len(self.configured_states)
-
-        # if self.g_states == {}:
-        #     self.g_states = {"gM": 0, "g": 1, "gP": 2}
-        # if self.x_states == {}:
-        #     self.x_states = {"x":3}
-        # for states in [self.g_states, self.x_states]:
-        #     self.configured_states += list(states.keys())
-        # self.M = len(self.configured_states)
 
     def __configure_transition_strengths(self):
         for x in self.x_states.keys():
@@ -718,6 +714,11 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
             self._configure_laser_couplings()
             self._configure_cavity_couplings()
 
+            # If no laser or cavity couplings were configured, add a 'no-action' coupling.  This is simply a workaround
+            # required as Qutip.mesolve gets upset if it is passed empty Hamiltonian lists.
+            if self.hams == []:
+                self.hams.append([self._get_dummy_coupling()])
+
             self.name = name
 
             self.tdfunc = self._compile(verbose)
@@ -732,6 +733,10 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
 
         @abstractmethod
         def _configure_cavity_couplings(self, args_only=False):
+            raise NotImplementedError()
+
+        @abstractmethod
+        def _get_dummy_coupling(self):
             raise NotImplementedError()
 
         def _compile(self, verbose=False):
@@ -827,7 +832,8 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
 
                 for g, x, r in self.atom.get_spontaneous_emission_channels():
                     try:
-                        spont_decay_ops.append(r * np.sqrt(2 * self.atom.gamma) *
+                        # r * spont_decay_ops.append(np.sqrt(2 * self.atom.gamma) *
+                        spont_decay_ops.append(np.sqrt(r * 2 * self.atom.gamma) *
                                              tensor(
                                                  basis(self.atom.M, self.atom.get_state_id(g)) *
                                                  basis(self.atom.M, self.atom.get_state_id(x)).dag(),
@@ -958,6 +964,10 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
                                 ), '{0} * sin({1}*t)'.format(g0_lab, omegaC_lab)]
                             ])
 
+        def _get_dummy_coupling(self):
+            M, N = self.atom.M, self.cavity.N
+            return tensor(qobj.Qobj(np.zeros((M, M))), qobj.Qobj(np.zeros((N, N))))
+
     class _CompiledHamiltonianCavityBiref(_CompiledHamiltonian):
 
         def _configure_c_ops(self, args_only=False):
@@ -1008,7 +1018,8 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
 
                 for g, x, r in self.atom.get_spontaneous_emission_channels():
                     try:
-                        spont_decay_ops.append(r * np.sqrt(2 * self.atom.gamma) *
+                        # r * spont_decay_ops.append(np.sqrt(2 * self.atom.gamma) *
+                        spont_decay_ops.append(np.sqrt(r * 2 * self.atom.gamma) *
                                              tensor(
                                                  basis(self.atom.M, self.atom.get_state_id(g)) *
                                                  basis(self.atom.M, self.atom.get_state_id(x)).dag(),
@@ -1199,6 +1210,10 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
 
                             self.hams.append(H_coupling)
 
+        def _get_dummy_coupling(self):
+            M, N = self.atom.M, self.cavity.N
+            return tensor(qobj.Qobj(np.zeros((M, M))), qobj.Qobj(np.zeros((N, N))), qobj.Qobj(np.zeros((N, N))))
+
 class ExperimentalResultsFactory():
 
     @classmethod
@@ -1212,6 +1227,7 @@ class ExperimentalResultsFactory():
 
         return exp_res
 
+    #TODO: have plot function take argument to give the output plot an overall title
     class _ExperimentalResults(ABC):
 
         def __init__(self, output, compiled_hamiltonian, verbose=False):
@@ -1821,9 +1837,11 @@ class AtomicOperatorsFactory(metaclass=Singleton):
 
             spont_decay_ops = []
 
-            for g,x,branching_ratio in self.atom.get_spontaneous_emission_channels():
+            # for g,x,branching_ratio in self.atom.get_spontaneous_emission_channels():
+            for g,x,r in self.atom.get_spontaneous_emission_channels():
                 try:
-                    spont_decay_ops.append(branching_ratio * np.sqrt(2 * self.atom.gamma) *
+                    # spont_decay_ops.append(branching_ratio * np.sqrt(2 * self.atom.gamma) *
+                    spont_decay_ops.append(np.sqrt(r * 2 * self.atom.gamma) *
                                            tensor(
                                              basis(self.atom.M, self.atom.get_state_id(g)) * basis(self.atom.M, self.atom.get_state_id(x)).dag(),
                                              qeye(Cavity.N)))
@@ -1848,9 +1866,11 @@ class AtomicOperatorsFactory(metaclass=Singleton):
 
             spont_decay_ops = []
 
-            for g,x,branching_ratio in self.atom.get_spontaneous_emission_channels():
+            # for g,x,branching_ratio in self.atom.get_spontaneous_emission_channels():
+            for g,x,r in self.atom.get_spontaneous_emission_channels():
                 try:
-                    spont_decay_ops.append(branching_ratio * np.sqrt(2 * self.atom.gamma) *
+                    # spont_decay_ops.append(branching_ratio * np.sqrt(2 * self.atom.gamma) *
+                    spont_decay_ops.append(np.sqrt(r * 2 * self.atom.gamma) *
                                            tensor(
                                              basis(self.atom.M, self.atom.get_state_id(g)) * basis(self.atom.M, self.atom.get_state_id(x)).dag(),
                                              qeye(Cavity.N),
