@@ -1516,14 +1516,19 @@ class ExperimentalResultsFactory():
             '''
             configured_bases_aliases = {'cavity':['cavity','cav','c'],
                                         'atomic':['atomic','atom','a'],
+                                        'mirror': ['mirror', 'mir', 'm'],
                                         'lab':['lab', 'linear', 'l'],
                                         'circ':['circ', 'circular']}
 
             def __get_pol_basis_info(basis):
+                # Make basis string lowercase.
+                basis = basis.lower()
                 if basis in configured_bases_aliases['cavity']:
                     return self.compiled_hamiltonian.cavity.R_CL, 'Cavity basis', ['X','Y']
                 elif basis in configured_bases_aliases['atomic']:
                     return self.compiled_hamiltonian.atom.R_AL, 'Atomic basis', ['$+$','$-$']
+                elif basis in configured_bases_aliases['mirror']:
+                    return self.compiled_hamiltonian.cavity.R_ML, 'Mirror basis', ['$M_1$','$M_2$']
                 elif basis in configured_bases_aliases['lab']:
                     return np.matrix([[1, 0],[0, 1]]), 'Lab basis', ['H','V']
                 elif basis in configured_bases_aliases['circ']:
