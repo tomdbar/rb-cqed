@@ -1381,6 +1381,24 @@ class ExperimentalResultsFactory():
 
             return f
 
+        def _chop_plot_array(self, arr, tol=1e-10):
+            '''
+            Chop small values in the array to zero.
+            :param arr: The array (or list of arrays) to be plotted.
+            :param tol: The absolute tolerance before cropping to zero.
+            :return: Value-chopped array (or list of arrays).
+            '''
+            def chop_arr(a):
+                a.real[abs(a.real) < tol] = 0.0
+                # a.imag[abs(a.imag) < tol] = 0.0
+                return a
+            if type(arr) in [list,tuple]:
+                return [chop_arr(a) for a in arr]
+            else:
+                return chop_arr(arr)
+
+            return arr
+
     class _ExperimentalResultsSingle(_ExperimentalResults):
 
         def get_cavity_emission(self, i_output=[]):
@@ -1397,9 +1415,9 @@ class ExperimentalResultsFactory():
             sp_op = self.atomic_operators.get_sp_op()
             return expect(sp_op, self._get_output_states(i_output))
 
-        def _plot_cavity_summary(self):
-            exp_an = self.get_cavity_number()
-            exp_em = self.get_cavity_emission()
+        def _plot_cavity_summary(self, abs_tol=1e-10):
+            exp_an = self._chop_plot_array(self.get_cavity_number())
+            exp_em = self._chop_plot_array(self.get_cavity_emission())
 
             t = self.output.times
 
@@ -1417,8 +1435,8 @@ class ExperimentalResultsFactory():
 
             return f, [[exp_an], [exp_em]]
 
-        def plot(self, atom_states=None):
-            f1, [[exp_an], [exp_em]] = self._plot_cavity_summary()
+        def plot(self, atom_states=None, abs_tol=1e-10):
+            f1, [[exp_an], [exp_em]] = self._plot_cavity_summary(abs_tol)
             f2 = self._plot_atomic_populations(atom_states)
 
             exp_sp = self.get_total_spontaneous_emission()
@@ -1482,9 +1500,9 @@ class ExperimentalResultsFactory():
             sp_op = self.atomic_operators.get_sp_op()
             return expect(sp_op, self._get_output_states(i_output))
         
-        def _plot_cavity_summary(self, R_ZL, basis_name, basis_labels):
-            exp_an1, exp_an2 = self.get_cavity_number(R_ZL)
-            exp_em1, exp_em2 = self.get_cavity_emission(R_ZL)
+        def _plot_cavity_summary(self, R_ZL, basis_name, basis_labels, abs_tol=1e-10):
+            exp_an1, exp_an2 = self._chop_plot_array(self.get_cavity_number(R_ZL))
+            exp_em1, exp_em2 = self._chop_plot_array(self.get_cavity_emission(R_ZL))
 
             lab1, lab2 = basis_labels
 
@@ -1507,7 +1525,7 @@ class ExperimentalResultsFactory():
 
             return f, [[exp_an1, exp_an2], [exp_em1, exp_em2]]
 
-        def plot(self, atom_states=None, pol_bases=['atomic', 'cavity']):
+        def plot(self, atom_states=None, pol_bases=['atomic', 'cavity'], abs_tol=1e-10):
             '''
             Plot a summary of the simulation results.
             :param atom_states: The displayed atomic populations.  Default behaviour is automatically configured
@@ -1572,7 +1590,7 @@ class ExperimentalResultsFactory():
 
                 basis_labels = [ketstr(x) for x in basis_labels]
 
-                f, [[exp_an1, exp_an2], [exp_em1, exp_em2]] = self._plot_cavity_summary(R_ZL, basis_name, basis_labels)
+                f, [[exp_an1, exp_an2], [exp_em1, exp_em2]] = self._plot_cavity_summary(R_ZL, basis_name, basis_labels, abs_tol)
                 f_list.append(f)
                 n_1 = np.trapz(exp_em1, dx=tStep)
                 n_2 = np.trapz(exp_em2, dx=tStep)
