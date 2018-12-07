@@ -601,12 +601,15 @@ class ExperimentalRunner():
                  cavity,
                  laser_couplings,
                  cavity_couplings,
-                 verbose = False):
+                 verbose = False,
+                 reconfigurable_decay_rates = False):
         self.atom = atom
         self.cavity = cavity
         self.laser_couplings = laser_couplings if type(laser_couplings)==list else [laser_couplings]
         self.cavity_couplings = cavity_couplings if type(cavity_couplings)==list else [cavity_couplings]
         self.verbose = verbose
+        #TODO: implement/test reconfigurable decay rates
+        self.reconfigurable_decay_rates = reconfigurable_decay_rates
 
         # Before additional off-resonance couplings are inferred in CompiledHamiltonianFactory.get(...), flag the
         # couplings explicitly set by the user.  This will be used to decide how to plot the results in
@@ -618,7 +621,8 @@ class ExperimentalRunner():
                                                                    self.cavity,
                                                                    self.laser_couplings,
                                                                    self.cavity_couplings,
-                                                                   self.verbose)
+                                                                   self.verbose,
+                                                                   self.reconfigurable_decay_rates)
 
     def run(self, psi0, t_length=1.2, n_steps=201):
 
@@ -674,18 +678,19 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
     __compiled_hamiltonians = []
 
     @classmethod
-    def get(cls, atom, cavity, laser_couplings, cavity_couplings, verbose=True):
+    def get(cls, atom, cavity, laser_couplings, cavity_couplings, verbose=True, reconfigurable_decay_rates=False):
 
         ham = None
 
         for c_ham in cls.__compiled_hamiltonians:
-            if c_ham._is_compatible(atom, cavity, laser_couplings, cavity_couplings):
+            if c_ham._is_compatible(atom, cavity, laser_couplings, cavity_couplings, reconfigurable_decay_rates):
                 if verbose:
                     print("Pre-compiled Hamiltonian, {0}.pyx, is suitable to run this experiment.".format(c_ham.name))
 
                 ham = copy.deepcopy(c_ham)
 
                 ham.atom = copy.deepcopy(atom)
+                print(cavity.kappa)
                 ham.cavity = copy.deepcopy(cavity)
                 ham.laser_couplings = copy.deepcopy(laser_couplings)
                 ham.cavity_couplings = copy.deepcopy(cavity_couplings)
@@ -708,7 +713,9 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
             ham = com_ham_cls(atom, cavity, laser_couplings, cavity_couplings,
                               'ExperimentalRunner_Hamiltonian_{0}_{1}'.format(
                               len(cls.__compiled_hamiltonians),
-                              os.getpid()))
+                              os.getpid()),
+                              verbose,
+                              reconfigurable_decay_rates)
             if verbose:
                 print("done.\n\tNew file is {0}.pyx.  Generated in {1} seconds.".format(ham.name,
                                                                                         np.round(time.time() - t_start, 3)))
@@ -727,7 +734,7 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
 
     class _CompiledHamiltonian(ABC):
 
-        def __init__(self, atom, cavity, laser_couplings, cavity_couplings, name, verbose=False):
+        def __init__(self, atom, cavity, laser_couplings, cavity_couplings, name, verbose=False, reconfigurable_decay_rates=False):
 
             # These are deep copies, so that if the atom, cavity, coupling objects are edited by the user after
             # compilation, the in memory versions of these with which the Hamiltonian was compiled is left unchanged.
@@ -736,6 +743,8 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
             self.laser_couplings = copy.deepcopy(laser_couplings)
             self.cavity_couplings = copy.deepcopy(cavity_couplings)
             self.name = name
+            self.verbose=verbose
+            self.reconfigurable_decay_rates=reconfigurable_decay_rates
 
             self.states = StatesFactory.get(self.atom, self.cavity, verbose)
 
@@ -792,10 +801,9 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
                 else:
                     with io.StringIO() as buf, redirect_stderr(buf):
                         rhs_generate(self.hams, self.c_op_list, args=self.args_hams, name=self.name, cleanup=False)
-            except:
+            except Exception as e:
                 if verbose:
-                    print("\n\tException in rhs comp...adding additional setups...", end='')
-                    # print('buf:\n', buf.getvalue())
+                    print("\n\tException in rhs comp: {0}...adding additional setups...".format(str(e)), end='')
                 for laser_couping in self.laser_couplings:
                     if laser_couping.setup_pyx != [] or laser_couping.add_pyx != []:
                         with fileinput.FileInput(self.name + '.pyx', inplace=True) as file:
@@ -819,7 +827,7 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
 
                 return cy_td_ode_rhs
 
-        def _is_compatible(self, atom, cavity, laser_couplings, cavity_couplings):
+        def _is_compatible(self, atom, cavity, laser_couplings, cavity_couplings, reconfigurable_decay_rates):
             '''
             Check whether the Hamiltonian can be used to simulate the given system without
             recompiling the .pyx file.
@@ -827,11 +835,22 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
             :param cavity:
             :param laser_couplings:
             :param cavity_couplings:
+            :param reconfigurable_decay_rates
             :return: Boolean
             '''
             can_use = True
+
+            # If decay rates are reconfigurable, allow them to be different.
+            if self.reconfigurable_decay_rates:
+                #Clone the items for comparison so we don't reset the decay rates on the atom/cavity we are actually
+                #going to use.
+                atom=copy.copy(atom)
+                cavity=copy.copy(cavity)
+                atom.gamma = self.atom.gamma
+                cavity.kappa = self.cavity.kappa
+
             if self.atom != atom:
-                can_use = False
+                    can_use = False
             if self.cavity != cavity:
                 can_use = False
             if  ( len(self.laser_couplings) != len(laser_couplings) ) or \
@@ -842,6 +861,8 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
                            list(zip(self.cavity_couplings, cavity_couplings)):
                     if x != y:
                         can_use = False
+            if self.reconfigurable_decay_rates != reconfigurable_decay_rates:
+                can_use = False
             return can_use
 
     class _CompiledHamiltonianCavitySingle(_CompiledHamiltonian):
@@ -855,25 +876,44 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
                               not the Hamiltonians themselves.
             :return: None
             '''
+            if self.reconfigurable_decay_rates:
+                self.args_hams.update({"sqrt_gamma": np.sqrt(self.atom.gamma),
+                                       "sqrt_kappa": np.sqrt(self.cavity.kappa)})
+
             if not args_only:
                 self.c_op_list = []
 
-                # Cavity decay
-                self.c_op_list.append(np.sqrt(2 * self.cavity.kappa) * tensor(qeye(self.atom.M), destroy(self.cavity.N)))
+                if not self.reconfigurable_decay_rates:
+                    # Cavity decay
+                    self.c_op_list.append(np.sqrt(2 * self.cavity.kappa) * tensor(qeye(self.atom.M), destroy(self.cavity.N)))
+                else:
+                    self.c_op_list.append([np.sqrt(2) * tensor(qeye(self.atom.M), destroy(self.cavity.N)), "sqrt_kappa"])
 
                 # Spontaneous decay
                 spont_decay_ops = []
 
-                for g, x, r in self.atom.get_spontaneous_emission_channels():
-                    try:
-                        # r * spont_decay_ops.append(np.sqrt(2 * self.atom.gamma) *
-                        spont_decay_ops.append(np.sqrt(r * 2 * self.atom.gamma) *
-                                             tensor(
-                                                 basis(self.atom.M, self.atom.get_state_id(g)) *
-                                                 basis(self.atom.M, self.atom.get_state_id(x)).dag(),
-                                                 qeye(self.cavity.N)))
-                    except KeyError:
-                        pass
+                if not self.reconfigurable_decay_rates:
+                    for g, x, r in self.atom.get_spontaneous_emission_channels():
+                        try:
+                            spont_decay_ops.append(np.sqrt(r * 2 * self.atom.gamma) *
+                                                 tensor(
+                                                     basis(self.atom.M, self.atom.get_state_id(g)) *
+                                                     basis(self.atom.M, self.atom.get_state_id(x)).dag(),
+                                                     qeye(self.cavity.N)))
+                        except KeyError:
+                            pass
+
+                else:
+                    for g, x, r in self.atom.get_spontaneous_emission_channels():
+                        try:
+                            spont_decay_ops.append(np.sqrt(r * 2) *
+                                                 tensor(
+                                                     basis(self.atom.M, self.atom.get_state_id(g)) *
+                                                     basis(self.atom.M, self.atom.get_state_id(x)).dag(),
+                                                     qeye(self.cavity.N)))
+                        except KeyError:
+                            pass
+                    spont_decay_ops = [[sum(spont_decay_ops), 'sqrt_gamma']]
 
                 self.c_op_list += spont_decay_ops
 
@@ -1014,8 +1054,13 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
             :return: None
             '''
             self.args_hams.update({"deltaP": self.cavity.deltaP})
+            if self.reconfigurable_decay_rates:
+                self.args_hams.update({"sqrt_gamma": np.sqrt(self.atom.gamma),
+                                       "kappa_1": self.cavity.kappa1,
+                                       "kappa_2": self.cavity.kappa2})
 
             if not args_only:
+
                 # Define collapse operators
                 R_MC = self.cavity.R_CL.getH() * self.cavity.R_ML
                 alpha_MC, beta_MC, phi1_MC, phi2_MC = R2args(R_MC)
@@ -1029,38 +1074,67 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
                 aM2Y = np.conj(np.exp(-i * phi1_MC) * alpha_MC) * aY
 
                 # Group collapse terms into fewest operators for speed.
-                self.c_op_list.append(2 * self.cavity.kappa1 * lindblad_dissipator(aM1X) +
-                                      2 * self.cavity.kappa1 * lindblad_dissipator(aM1Y) +
-                                      2 * self.cavity.kappa2 * lindblad_dissipator(aM2X) +
-                                      2 * self.cavity.kappa2 * lindblad_dissipator(aM2Y))
-                self.c_op_list.append([2 * self.cavity.kappa1 * (sprepost(aM1Y, aM1X.dag())
-                                                            - 0.5 * spost(aM1X.dag() * aM1Y)
-                                                            - 0.5 * spre(aM1X.dag() * aM1Y)) +
-                                       2 * self.cavity.kappa2 * (sprepost(aM2Y, aM2X.dag())
-                                                            - 0.5 * spost(aM2X.dag() * aM2Y)
-                                                            - 0.5 * spre(aM2X.dag() * aM2Y)),
-                                       'exp(i*deltaP*t)'])
-                self.c_op_list.append([2 * self.cavity.kappa1 * (sprepost(aM1X, aM1Y.dag())
-                                                            - 0.5 * spost(aM1Y.dag() * aM1X)
-                                                            - 0.5 * spre(aM1Y.dag() * aM1X)) +
-                                       2 * self.cavity.kappa2 * (sprepost(aM2X, aM2Y.dag())
-                                                            - 0.5 * spost(aM2Y.dag() * aM2X)
-                                                            - 0.5 * spre(aM2Y.dag() * aM2X)),
-                                       'exp(-i*deltaP*t)'])
+                if not self.reconfigurable_decay_rates:
+                    self.c_op_list.append(2 * self.cavity.kappa1 * lindblad_dissipator(aM1X) +
+                                          2 * self.cavity.kappa1 * lindblad_dissipator(aM1Y) +
+                                          2 * self.cavity.kappa2 * lindblad_dissipator(aM2X) +
+                                          2 * self.cavity.kappa2 * lindblad_dissipator(aM2Y))
+                    self.c_op_list.append([2 * self.cavity.kappa1 * (sprepost(aM1Y, aM1X.dag())
+                                                                - 0.5 * spost(aM1X.dag() * aM1Y)
+                                                                - 0.5 * spre(aM1X.dag() * aM1Y)) +
+                                           2 * self.cavity.kappa2 * (sprepost(aM2Y, aM2X.dag())
+                                                                - 0.5 * spost(aM2X.dag() * aM2Y)
+                                                                - 0.5 * spre(aM2X.dag() * aM2Y)),
+                                           'exp(i*deltaP*t)'])
+                    self.c_op_list.append([2 * self.cavity.kappa1 * (sprepost(aM1X, aM1Y.dag())
+                                                                - 0.5 * spost(aM1Y.dag() * aM1X)
+                                                                - 0.5 * spre(aM1Y.dag() * aM1X)) +
+                                           2 * self.cavity.kappa2 * (sprepost(aM2X, aM2Y.dag())
+                                                                - 0.5 * spost(aM2Y.dag() * aM2X)
+                                                                - 0.5 * spre(aM2Y.dag() * aM2X)),
+                                           'exp(-i*deltaP*t)'])
+                else:
+                    self.c_op_list += \
+                        [[2 * lindblad_dissipator(aM1X) + 2 * lindblad_dissipator(aM1Y),
+                          'kappa1'],
+                         [2 * lindblad_dissipator(aM2X) + 2 * lindblad_dissipator(aM2Y),
+                          'kappa2'],
+                         [2 * (sprepost(aM1Y, aM1X.dag()) - 0.5 * spost(aM1X.dag() * aM1Y) - 0.5 * spre(aM1X.dag() * aM1Y)),
+                          'kappa1 * exp(i*deltaP*t)'],
+                         [2 * (sprepost(aM2Y, aM2X.dag()) - 0.5 * spost(aM2X.dag() * aM2Y) - 0.5 * spre(aM2X.dag() * aM2Y)),
+                          'kappa2 * exp(i*deltaP*t)'],
+                         [2 * (sprepost(aM1X, aM1Y.dag()) - 0.5 * spost(aM1Y.dag() * aM1X) - 0.5 * spre(aM1Y.dag() * aM1X)),
+                          'kappa1 * exp(-i*deltaP*t)'],
+                         [2 * (sprepost(aM2X, aM2Y.dag()) - 0.5 * spost(aM2Y.dag() * aM2X) - 0.5 * spre(aM2Y.dag() * aM2X)),
+                          'kappa2 * exp(-i*deltaP*t)']]
 
+                # Spontaneous decay
                 spont_decay_ops = []
 
-                for g, x, r in self.atom.get_spontaneous_emission_channels():
-                    try:
-                        # r * spont_decay_ops.append(np.sqrt(2 * self.atom.gamma) *
-                        spont_decay_ops.append(np.sqrt(r * 2 * self.atom.gamma) *
-                                             tensor(
-                                                 basis(self.atom.M, self.atom.get_state_id(g)) *
-                                                 basis(self.atom.M, self.atom.get_state_id(x)).dag(),
-                                                 qeye(self.cavity.N),
-                                                 qeye(self.cavity.N)))
-                    except KeyError:
-                        pass
+                if not self.reconfigurable_decay_rates:
+                    for g, x, r in self.atom.get_spontaneous_emission_channels():
+                        try:
+                            # r * spont_decay_ops.append(np.sqrt(2 * self.atom.gamma) *
+                            spont_decay_ops.append(np.sqrt(r * 2 * self.atom.gamma) *
+                                                 tensor(
+                                                     basis(self.atom.M, self.atom.get_state_id(g)) *
+                                                     basis(self.atom.M, self.atom.get_state_id(x)).dag(),
+                                                     qeye(self.cavity.N),
+                                                     qeye(self.cavity.N)))
+                        except KeyError:
+                            pass
+
+                else:
+                    for g, x, r in self.atom.get_spontaneous_emission_channels():
+                        try:
+                            spont_decay_ops.append(np.sqrt(r * 2) *
+                                                 tensor(
+                                                     basis(self.atom.M, self.atom.get_state_id(g)) *
+                                                     basis(self.atom.M, self.atom.get_state_id(x)).dag(),
+                                                     qeye(self.cavity.N)))
+                        except KeyError:
+                            pass
+                    spont_decay_ops = [[sum(spont_decay_ops), 'sqrt_gamma']]
 
                 self.c_op_list += spont_decay_ops
 
@@ -2092,7 +2166,7 @@ class AtomicOperatorsFactory(metaclass=Singleton):
 class StatesFactory(metaclass=Singleton):
 
     states = []
-
+    #todo account for reconfigurable decays in atom==atom, cavity==cavity
     @classmethod
     def get(cls, atom, cavity, verbose=False):
         for s in cls.states:
