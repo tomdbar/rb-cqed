@@ -608,7 +608,6 @@ class ExperimentalRunner():
         self.laser_couplings = laser_couplings if type(laser_couplings)==list else [laser_couplings]
         self.cavity_couplings = cavity_couplings if type(cavity_couplings)==list else [cavity_couplings]
         self.verbose = verbose
-        #TODO: implement/test reconfigurable decay rates
         self.reconfigurable_decay_rates = reconfigurable_decay_rates
 
         # Before additional off-resonance couplings are inferred in CompiledHamiltonianFactory.get(...), flag the
