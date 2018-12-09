@@ -690,7 +690,6 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
                 ham = copy.deepcopy(c_ham)
 
                 ham.atom = copy.deepcopy(atom)
-                print(cavity.kappa)
                 ham.cavity = copy.deepcopy(cavity)
                 ham.laser_couplings = copy.deepcopy(laser_couplings)
                 ham.cavity_couplings = copy.deepcopy(cavity_couplings)
