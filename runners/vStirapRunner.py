@@ -602,13 +602,15 @@ class ExperimentalRunner():
                  laser_couplings,
                  cavity_couplings,
                  verbose = False,
-                 reconfigurable_decay_rates = False):
+                 reconfigurable_decay_rates = False,
+                 ham_pyx_dir=None):
         self.atom = atom
         self.cavity = cavity
         self.laser_couplings = laser_couplings if type(laser_couplings)==list else [laser_couplings]
         self.cavity_couplings = cavity_couplings if type(cavity_couplings)==list else [cavity_couplings]
         self.verbose = verbose
         self.reconfigurable_decay_rates = reconfigurable_decay_rates
+        self.ham_pyx_dir = ham_pyx_dir
 
         # Before additional off-resonance couplings are inferred in CompiledHamiltonianFactory.get(...), flag the
         # couplings explicitly set by the user.  This will be used to decide how to plot the results in
@@ -621,7 +623,8 @@ class ExperimentalRunner():
                                                                    self.laser_couplings,
                                                                    self.cavity_couplings,
                                                                    self.verbose,
-                                                                   self.reconfigurable_decay_rates)
+                                                                   self.reconfigurable_decay_rates,
+                                                                   self.ham_pyx_dir)
 
     def run(self, psi0, t_length=1.2, n_steps=201):
 
@@ -635,7 +638,8 @@ class ExperimentalRunner():
         # and so uses our compiled hamiltonian.  We do this as setting rhs_reuse=True
         # prevents the .pyx files from being deleted after the first run.
         rhs_clear()
-        opts = Options(rhs_reuse=True, rhs_filename=self.compiled_hamiltonian.name)
+       # opts = Options(rhs_reuse=True, rhs_filename=self.compiled_hamiltonian.name)
+        opts = Options(rhs_filename=self.compiled_hamiltonian.name)
 
         if self.verbose:
             t_start = time.time()
@@ -677,14 +681,18 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
     __compiled_hamiltonians = []
 
     @classmethod
-    def get(cls, atom, cavity, laser_couplings, cavity_couplings, verbose=True, reconfigurable_decay_rates=False):
+    def get(cls, atom, cavity, laser_couplings, cavity_couplings, verbose=True, reconfigurable_decay_rates=False,
+            ham_pyx_dir=None):
 
         ham = None
 
         for c_ham in cls.__compiled_hamiltonians:
             if c_ham._is_compatible(atom, cavity, laser_couplings, cavity_couplings, reconfigurable_decay_rates):
                 if verbose:
-                    print("Pre-compiled Hamiltonian, {0}.pyx, is suitable to run this experiment.".format(c_ham.name))
+                    if c_ham.ham_pyx_dir != None:
+                        print("Pre-compiled Hamiltonian, {0}.pyx, is suitable to run this experiment.".format(c_ham.name))
+                    else:
+                        print("A pre-compiled Hamiltonian is suitable to run this experiment.")
 
                 ham = copy.deepcopy(c_ham)
 
@@ -698,7 +706,7 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
 
         if not ham:
             if verbose:
-                print("No suitable pre-compiled Hamiltonian found.  Generating Cython file...", end='')
+                print("No suitable pre-compiled Hamiltonian found.  Generating and compiling Cython file...", end='')
                 t_start = time.time()
 
             if type(cavity)==Cavity:
@@ -710,13 +718,18 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
 
             ham = com_ham_cls(atom, cavity, laser_couplings, cavity_couplings,
                               'ExperimentalRunner_Hamiltonian_{0}_{1}'.format(
-                              len(cls.__compiled_hamiltonians),
-                              os.getpid()),
+                                  len(cls.__compiled_hamiltonians),
+                                  os.getpid()),
                               verbose,
-                              reconfigurable_decay_rates)
+                              reconfigurable_decay_rates,
+                              ham_pyx_dir)
             if verbose:
-                print("done.\n\tNew file is {0}.pyx.  Generated in {1} seconds.".format(ham.name,
-                                                                                        np.round(time.time() - t_start, 3)))
+                if ham.ham_pyx_dir != None:
+                    print("done.\n\tNew file is {0}.pyx.  Complete in {1} seconds.".format(
+                        ham.name, np.round(time.time() - t_start, 3)))
+                else:
+                    print("done\n\tThe pyx file was deleted after compilation.  Complete in {0} seconds.".format(
+                        np.round(time.time() - t_start, 3)))
 
             cls.__compiled_hamiltonians.append(ham)
 
@@ -732,7 +745,8 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
 
     class _CompiledHamiltonian(ABC):
 
-        def __init__(self, atom, cavity, laser_couplings, cavity_couplings, name, verbose=False, reconfigurable_decay_rates=False):
+        def __init__(self, atom, cavity, laser_couplings, cavity_couplings, name, verbose=False,
+                     reconfigurable_decay_rates=False, ham_pyx_dir=None):
 
             # These are deep copies, so that if the atom, cavity, coupling objects are edited by the user after
             # compilation, the in memory versions of these with which the Hamiltonian was compiled is left unchanged.
@@ -743,6 +757,7 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
             self.name = name
             self.verbose=verbose
             self.reconfigurable_decay_rates=reconfigurable_decay_rates
+            self.ham_pyx_dir = ham_pyx_dir
 
             self.states = StatesFactory.get(self.atom, self.cavity, verbose)
 
@@ -762,7 +777,7 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
 
             self.name = name
 
-            self.tdfunc = self._compile(verbose)
+            self.tdfunc = self._compile(self.verbose)
 
         @abstractmethod
         def _configure_c_ops(self, args_only=False):
@@ -793,12 +808,17 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
             def cy_td_ode_rhs():
                 raise NotImplementedError
 
+            if self.ham_pyx_dir == None:
+                cleanup=True
+            else:
+                cleanup = False
+
             try:
                 if verbose:
-                    rhs_generate(self.hams, self.c_op_list, args=self.args_hams, name=self.name, cleanup=False)
+                    rhs_generate(self.hams, self.c_op_list, args=self.args_hams, name=self.name, cleanup=cleanup)
                 else:
                     with io.StringIO() as buf, redirect_stderr(buf):
-                        rhs_generate(self.hams, self.c_op_list, args=self.args_hams, name=self.name, cleanup=False)
+                        rhs_generate(self.hams, self.c_op_list, args=self.args_hams, name=self.name, cleanup=cleanup)
             except Exception as e:
                 if verbose:
                     print("\n\tException in rhs comp: {0}...adding additional setups...".format(str(e)), end='')
@@ -822,6 +842,27 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
                     print("and trying rhs generate again...", end='')
                 code = compile('from ' + self.name + ' import cy_td_ode_rhs', '<string>', 'exec')
                 exec(code, globals())
+
+            if cleanup==True:
+                try:
+                    os.remove(self.name + '.pyx')
+                except:
+                    pass
+
+            else:
+                if not os.path.isdir(self.ham_pyx_dir):
+                    try:
+                        if self.verbose:
+                            print('creating directory for Hamiltonian pyx file at {}'.format(self.ham_pyx_dir),
+                                  end='...')
+                        os.mkdir(self.ham_pyx_dir)
+                        if self.verbose:
+                            print('moving pyx file', end='...')
+                        os.rename(self.name + '.pyx', os.path.join(self.ham_pyx_dir, self.name + '.pyx'))
+
+                    except Exception as e:
+                        if self.verbose:
+                            print('failed with {}.'.format(e.str()), end='...')
 
                 return cy_td_ode_rhs
 
@@ -1328,6 +1369,7 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
             M, N = self.atom.M, self.cavity.N
             return tensor(qobj.Qobj(np.zeros((M, M))), qobj.Qobj(np.zeros((N, N))), qobj.Qobj(np.zeros((N, N))))
 
+#todo: make color ordering the same for all results
 class ExperimentalResultsFactory():
 
     @classmethod
@@ -1403,23 +1445,21 @@ class ExperimentalResultsFactory():
         #     raise NotImplementedError()
 
         @abstractmethod
-        def get_spontaneous_emission(self, i_output=[]):
-            sp_op = self.atomic_operators.get_sp_op()
-            return expect(sp_op, self._get_output_states(i_output))
-
-        @abstractmethod
-        def get_total_spontaneous_emission(self):
-            exp_sp = self.get_spontaneous_emission()
-            n_sp = np.trapz(exp_sp, dx=self.tStep)
-            return n_sp
-
-        @abstractmethod
         def plot(self, *args):
             raise NotImplementedError()
 
         @abstractmethod
         def _plot_cavity_summary(self, *args):
             raise NotImplementedError()
+
+        def get_spontaneous_emission(self, i_output=[]):
+            sp_op = self.atomic_operators.get_sp_op()
+            return expect(sp_op, self._get_output_states(i_output))
+
+        def get_total_spontaneous_emission(self):
+            exp_sp = self.get_spontaneous_emission()
+            n_sp = np.trapz(exp_sp, dx=self.tStep)
+            return n_sp
 
         def _plot_atomic_populations(self, atom_states):
             # If no atom_states were asked for explicitly, return as we don't want this plot.

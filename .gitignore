@@ -1,3 +1,4 @@
 *.pyx
 data/
+compiled-hamiltonian-pyx-files/
 .idea
