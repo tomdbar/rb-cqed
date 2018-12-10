@@ -843,9 +843,14 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
                 #Clone the items for comparison so we don't reset the decay rates on the atom/cavity we are actually
                 #going to use.
                 atom=copy.copy(atom)
-                cavity=copy.copy(cavity)
                 atom.gamma = self.atom.gamma
-                cavity.kappa = self.cavity.kappa
+
+                cavity = copy.copy(cavity)
+                if type(cavity)==Cavity:
+                    cavity.kappa = self.cavity.kappa
+                else:
+                    cavity.kappa1 = self.cavity.kappa1
+                    cavity.kappa2 = self.cavity.kappa2
 
             if self.atom != atom:
                     can_use = False
@@ -1054,8 +1059,8 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
             self.args_hams.update({"deltaP": self.cavity.deltaP})
             if self.reconfigurable_decay_rates:
                 self.args_hams.update({"sqrt_gamma": np.sqrt(self.atom.gamma),
-                                       "kappa_1": self.cavity.kappa1,
-                                       "kappa_2": self.cavity.kappa2})
+                                       "kappa1": self.cavity.kappa1,
+                                       "kappa2": self.cavity.kappa2})
 
             if not args_only:
 
@@ -1129,6 +1134,7 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
                                                  tensor(
                                                      basis(self.atom.M, self.atom.get_state_id(g)) *
                                                      basis(self.atom.M, self.atom.get_state_id(x)).dag(),
+                                                     qeye(self.cavity.N),
                                                      qeye(self.cavity.N)))
                         except KeyError:
                             pass
@@ -1345,6 +1351,8 @@ class ExperimentalResultsFactory():
             self.ketbras = self.compiled_hamiltonian.states.ketbras
             self.verbose = verbose
 
+            self.tStep = np.mean(np.ediff1d(self.output.times))
+
             self.emission_operators = EmissionOperatorsFactory.get(self.compiled_hamiltonian.atom,
                                                                    self.compiled_hamiltonian.cavity,
                                                                    self.ketbras,
@@ -1375,6 +1383,10 @@ class ExperimentalResultsFactory():
             raise NotImplementedError()
 
         @abstractmethod
+        def get_total_cavity_emission(self, *args):
+            raise NotImplementedError()
+
+        @abstractmethod
         def get_cavity_number(self, *args):
             raise NotImplementedError()
 
@@ -1382,9 +1394,24 @@ class ExperimentalResultsFactory():
         def get_atomic_population(self, *args):
             raise NotImplementedError()
 
+        # @abstractmethod
+        # def get_spontaneous_emission(self, *args):
+        #     raise NotImplementedError()
+        #
+        # @abstractmethod
+        # def get_total_spontaneous_emission(self, *args):
+        #     raise NotImplementedError()
+
         @abstractmethod
-        def get_total_spontaneous_emission(self, *args):
-            raise NotImplementedError()
+        def get_spontaneous_emission(self, i_output=[]):
+            sp_op = self.atomic_operators.get_sp_op()
+            return expect(sp_op, self._get_output_states(i_output))
+
+        @abstractmethod
+        def get_total_spontaneous_emission(self):
+            exp_sp = self.get_spontaneous_emission()
+            n_sp = np.trapz(exp_sp, dx=self.tStep)
+            return n_sp
 
         @abstractmethod
         def plot(self, *args):
@@ -1476,16 +1503,15 @@ class ExperimentalResultsFactory():
         def get_cavity_emission(self, i_output=[]):
             return np.abs(expect(self.emission_operators.get(), self._get_output_states(i_output)))
 
+        def get_total_cavity_emission(self):
+            return np.trapz(self.get_cavity_emission(), dx=self.tStep)
+
         def get_cavity_number(self, i_output=[]):
             return np.abs(expect(self.number_operators.get(), self._get_output_states(i_output)))
 
         def get_atomic_population(self, states=[], i_output=[]):
             at_ops = self.atomic_operators.get_at_op(states)
             return np.abs(expect(at_ops, self._get_output_states(i_output)))
-
-        def get_total_spontaneous_emission(self, i_output=[]):
-            sp_op = self.atomic_operators.get_sp_op()
-            return expect(sp_op, self._get_output_states(i_output))
 
         def _plot_cavity_summary(self, abs_tol=1e-10):
             exp_an = self._chop_plot_array(self.get_cavity_number())
@@ -1511,13 +1537,8 @@ class ExperimentalResultsFactory():
             f1, [[exp_an], [exp_em]] = self._plot_cavity_summary(abs_tol)
             f2 = self._plot_atomic_populations(atom_states)
 
-            exp_sp = self.get_total_spontaneous_emission()
-
-            t = self.output.times
-            tStep = np.mean(np.ediff1d(t))
-
-            n_ph = np.trapz(exp_em, dx=tStep)
-            n_sp = np.trapz(exp_sp, dx=tStep)
+            n_ph = np.trapz(exp_em, dx=self.tStep)
+            n_sp = self.get_total_spontaneous_emission()
 
             ph_em_str = '\\textbf{' + 'Photon emission: {}'.format(np.round(n_ph, 3)) + '}'
             sp_em_str = '\\textbf{' + 'Spontaneous emission: {}'.format(np.round(n_sp, 3)) + '}'
@@ -1549,8 +1570,11 @@ class ExperimentalResultsFactory():
             )).T
 
             return emP, emM
+            # return list(zip(*[iter(ems)] * 2))
 
-            return list(zip(*[iter(ems)] * 2))
+        def get_total_cavity_emission(self, R_ZL):
+            emP, emM = self.get_cavity_emission(R_ZL)
+            return np.trapz(emP, dx=self.tStep), np.trapz(emM, dx=self.tStep)
 
         def get_cavity_number(self, R_ZL, i_output=[]):
             if type(R_ZL) != np.matrix:
@@ -1568,9 +1592,14 @@ class ExperimentalResultsFactory():
             at_ops = self.atomic_operators.get_at_op(states)
             return np.abs(expect(at_ops, self._get_output_states(i_output)))
 
-        def get_total_spontaneous_emission(self, i_output=[]):
+        def get_spontaneous_emission(self, i_output=[]):
             sp_op = self.atomic_operators.get_sp_op()
             return expect(sp_op, self._get_output_states(i_output))
+
+        def get_total_spontaneous_emission(self):
+            exp_sp = self.get_spontaneous_emission()
+            n_sp = np.trapz(exp_sp, dx=self.tStep)
+            return n_sp
         
         def _plot_cavity_summary(self, R_ZL, basis_name, basis_labels, abs_tol=1e-10):
             exp_an1, exp_an2 = self._chop_plot_array(self.get_cavity_number(R_ZL))
@@ -1633,7 +1662,6 @@ class ExperimentalResultsFactory():
                 if type(basis) is str:
                     pol_bases_info.append(__get_pol_basis_info(basis))
                 elif type(basis) in [list,tuple]:
-                    #TODO: check/force custom rotation matrix to be unitary?
                     pol_bases_info.append(basis)
                 else:
                     raise Exception(textwrap.dedent('''\
@@ -1647,8 +1675,6 @@ class ExperimentalResultsFactory():
             f_list = []
             emm_summary_str_list = []
             n_ph = None
-
-            tStep = np.mean(np.ediff1d(self.output.times))
 
             # Helper function to format basis labels into the string format to show as ket's in the plots.
             def ketstr(s, cap="$"):
@@ -1664,8 +1690,8 @@ class ExperimentalResultsFactory():
 
                 f, [[exp_an1, exp_an2], [exp_em1, exp_em2]] = self._plot_cavity_summary(R_ZL, basis_name, basis_labels, abs_tol)
                 f_list.append(f)
-                n_1 = np.trapz(exp_em1, dx=tStep)
-                n_2 = np.trapz(exp_em2, dx=tStep)
+                n_1 = np.trapz(exp_em1, dx=self.tStep)
+                n_2 = np.trapz(exp_em2, dx=self.tStep)
                 if n_ph==None:
                     n_ph = n_1 + n_2
 
@@ -1685,8 +1711,7 @@ class ExperimentalResultsFactory():
                 for ttl in [ttl1, ttl2]:
                     ttl.set_position([.5, 1.08])
 
-                exp_sp = self.get_total_spontaneous_emission()
-                n_sp = np.trapz(exp_sp, dx=tStep)
+                n_sp = self.get_total_spontaneous_emission()
 
                 ph_em_str = '\\textbf{' + 'Total photon emission: {}'.format(np.round(n_ph, 3)) + '}'
                 sp_em_str = '\\textbf{' + 'Total spontaneous emission: {}'.format(np.round(n_sp, 3)) + '}'
@@ -1709,73 +1734,6 @@ class ExperimentalResultsFactory():
                                  'capstyle': 'round'})
 
             return f_list + [f2]
-
-
-        # def plot(self, atom_states=None, pol_bases=None):
-        #     '''
-        #     Plot a summary of the simulation results.
-        #     :param atom_states: The displayed atomic populations.  Default behaviour is automatically configured
-        #     to choose sensible states.
-        #     :return:
-        #     '''
-        #     #TODO: relabel plots in terms of the cavity basis, mirror basis, atomic basis etc.
-        #     exp_anX, exp_anY = self.get_cavity_number(self.compiled_hamiltonian.cavity.R_CL)
-        #     exp_emX, exp_emY = self.get_cavity_emission(self.compiled_hamiltonian.cavity.R_CL)
-        #     exp_anP, exp_anM = self.get_cavity_number(self.compiled_hamiltonian.atom.R_AL)
-        #     exp_emP, exp_emM = self.get_cavity_emission(self.compiled_hamiltonian.atom.R_AL)
-        #
-        #     exp_sp = self.get_total_spontaneous_emission()
-        #
-        #     t = self.output.times
-        #     tStep = np.mean(np.ediff1d(t))
-        #
-        #     n_X = np.trapz(exp_emX, dx=tStep)
-        #     n_Y = np.trapz(exp_emY, dx=tStep)
-        #     n_ph = n_X + n_Y
-        #     n_sp = np.trapz(exp_sp, dx=tStep)
-        #
-        #
-        #
-        #     print('Photon emission:', np.round(n_ph, 3))
-        #     print('Photon emission in |X>, |Y>:', np.round(n_X, 3), np.round(n_Y, 3))
-        #     print('Spontaneous emission:', np.round(n_sp, 3))
-        #
-        #     # Plot the results
-        #     f1, ((a1a, a1b),
-        #          (a2a, a2b)) = plt.subplots(2, 2, sharex=True, figsize=(12, 11. / 2))
-        #
-        #     a1a.set_title('\\textbf{Cavity population}', fontsize=16)
-        #     a1b.set_title('\\textbf{Cavity emission}', fontsize=16, fontweight='bold')
-        #
-        #     ###
-        #     axA, axB = a1a, a1b
-        #
-        #     axA.plot(t, exp_anP, label='$+ (\sigma^{+})$')
-        #     axA.plot(t, exp_anM, label='$- (\sigma^{-})$')
-        #     axA.set_ylabel('Cavity mode population')
-        #     axA.legend(loc=1)
-        #
-        #     axB.plot(t, exp_emP, label='$+ (\sigma^{+})$')
-        #     axB.plot(t, exp_emM, label='$- (\sigma^{-})$')
-        #     axB.set_ylabel('Cavity emission rate, $1/\mu s$')
-        #     axB.legend(loc=1)
-        #
-        #     ###
-        #     axA, axB = a2a, a2b
-        #
-        #     axA.plot(t, exp_anX, label='$X$')
-        #     axA.plot(t, exp_anY, label='$Y$')
-        #     axA.set_ylabel('Cavity mode population')
-        #     axA.legend(loc=1)
-        #
-        #     axB.plot(t, exp_emX, label='$X$')
-        #     axB.plot(t, exp_emY, label='$Y$')
-        #     axB.set_ylabel('Cavity emission rate, $1/\mu s$')
-        #     axB.legend(loc=1)
-        #
-        #     f2 = self._plot_atomic_populations(atom_states)
-        #
-        #     return f1, f2
 
 '''
 This is just some notes on the below.  Essentially I want to minimise re-computation of the operators I track through
