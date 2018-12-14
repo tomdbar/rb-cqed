@@ -299,6 +299,7 @@ class Atom4lvl(RunnerDataClass):
     x_states: dict = field(default_factory=dict)
     configured_states: list = field(default_factory=list)
     transition_strengths: dict = field(default_factory=dict)
+    sink_state: str = None
     g_detunings: dict = field(default_factory=dict)
     x_detunings: dict = field(default_factory=dict)
     M: int = 4
@@ -315,8 +316,7 @@ class Atom4lvl(RunnerDataClass):
     def __post_init__(self):
         # if self.configured_states == []:
         self.__configure_states()
-        if self.transition_strengths == {}:
-            self.__configure_transition_strengths()
+        self.__configure_transition_strengths()
         self.__configure_detunings()
         self.__configure_rotation_matrix()
 
@@ -369,10 +369,30 @@ class Atom4lvl(RunnerDataClass):
         self.M = len(self.configured_states)
 
     def __configure_transition_strengths(self):
-        for x in self.x_states.keys():
-            self.transition_strengths[x] = {}
-            for g in self.g_states.keys():
-                self.transition_strengths[x][g] = 1
+        if self.sink_state != None:
+            if not self.sink_state in self.g_states:
+                raise Exception(textwrap.dedent('''\
+                    Atom4lvl.sink_state must be a configured groud state.\
+                    \tUnrecognised state: {0}\
+                    \tAllowed states: {1}\
+                    '''.format(self.sink_state, list(self.g_states.keys()))))
+            else:
+                if self.transition_strengths != {}:
+                    print(textwrap.dedent('''Warning: \
+                    Atom4lvl.sink_state will overwrite the couplings passed in Atom4lvl.transition_strengths to ensure \
+                    that their no coupling (other than through spontaneous decay) between the sink_state and other \
+                    levels.
+                    '''))
+
+        if self.transition_strengths == {}:
+            for x in self.x_states.keys():
+                self.transition_strengths[x] = {}
+                for g in self.g_states.keys():
+                    self.transition_strengths[x][g] = 1
+
+        if self.sink_state != None:
+            for x in self.x_states.keys():
+                self.transition_strengths[x][self.sink_state] = 0
 
     def __configure_detunings(self):
         for g in self.g_states.keys():
@@ -437,11 +457,21 @@ class Atom4lvl(RunnerDataClass):
         # by Qutip.mesolve.
         gs, xs, CGs = [], [], []
 
-        for x in self.x_states:
-            for g, CG in self.transition_strengths[x].items():
-                gs.append(g)
-                xs.append(x)
-                CGs.append(CG)
+        if self.sink_state == None:
+            for x in self.x_states:
+                for g, CG in self.transition_strengths[x].items():
+                    gs.append(g)
+                    xs.append(x)
+                    CGs.append(CG)
+        else:
+            for x in self.x_states:
+                for g, CG in self.transition_strengths[x].items():
+                    gs.append(g)
+                    xs.append(x)
+                    if g != self.sink_state:
+                        CGs.append(0)
+                    else:
+                        CGs.append(1)
 
         norm_CG = sum(CGs)
         sp_emm_channels = zip(gs,xs,[CG/norm_CG for CG in CGs])
@@ -728,7 +758,7 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
                     print("done.\n\tNew file is {0}.pyx.  Complete in {1} seconds.".format(
                         ham.name, np.round(time.time() - t_start, 3)))
                 else:
-                    print("done\n\tThe pyx file was deleted after compilation.  Complete in {0} seconds.".format(
+                    print("done.\n\tThe pyx file was deleted after compilation.  Complete in {0} seconds.".format(
                         np.round(time.time() - t_start, 3)))
 
             cls.__compiled_hamiltonians.append(ham)
