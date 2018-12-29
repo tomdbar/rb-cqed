@@ -909,34 +909,38 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
             '''
             can_use = True
 
-            # If decay rates are reconfigurable, allow them to be different.
-            if self.reconfigurable_decay_rates:
-                #Clone the items for comparison so we don't reset the decay rates on the atom/cavity we are actually
-                #going to use.
-                atom=copy.copy(atom)
-                atom.gamma = self.atom.gamma
-
-                cavity = copy.copy(cavity)
-                if type(cavity)==Cavity:
-                    cavity.kappa = self.cavity.kappa
-                else:
-                    cavity.kappa1 = self.cavity.kappa1
-                    cavity.kappa2 = self.cavity.kappa2
-
-            if self.atom != atom:
-                    can_use = False
-            if self.cavity != cavity:
-                can_use = False
-            if  ( len(self.laser_couplings) != len(laser_couplings) ) or \
-                ( len(self.cavity_couplings) != len(cavity_couplings)):
+            if (type(atom)!=type(self.atom)) or (type(cavity)!=type(self.cavity)):
                 can_use = False
             else:
-                for x,y in list(zip(self.laser_couplings, laser_couplings)) + \
-                           list(zip(self.cavity_couplings, cavity_couplings)):
-                    if x != y:
+                # If decay rates are reconfigurable, allow them to be different.
+                if self.reconfigurable_decay_rates:
+                    #Clone the items for comparison so we don't reset the decay rates on the atom/cavity we are actually
+                    #going to use.
+                    atom=copy.copy(atom)
+                    atom.gamma = self.atom.gamma
+
+                    cavity = copy.copy(cavity)
+
+                    if type(cavity)==Cavity:
+                        cavity.kappa = self.cavity.kappa
+                    else:
+                        cavity.kappa1 = self.cavity.kappa1
+                        cavity.kappa2 = self.cavity.kappa2
+
+                if self.atom != atom:
                         can_use = False
-            if self.reconfigurable_decay_rates != reconfigurable_decay_rates:
-                can_use = False
+                if self.cavity != cavity:
+                    can_use = False
+                if  ( len(self.laser_couplings) != len(laser_couplings) ) or \
+                    ( len(self.cavity_couplings) != len(cavity_couplings)):
+                    can_use = False
+                else:
+                    for x,y in list(zip(self.laser_couplings, laser_couplings)) + \
+                               list(zip(self.cavity_couplings, cavity_couplings)):
+                        if x != y:
+                            can_use = False
+                if self.reconfigurable_decay_rates != reconfigurable_decay_rates:
+                    can_use = False
             return can_use
 
     class _CompiledHamiltonianCavitySingle(_CompiledHamiltonian):
@@ -1869,7 +1873,6 @@ class EmissionOperatorsFactory(metaclass=Singleton):
 
             self.a = tensor(qeye(self.atom.M), destroy(self.cavity.N))
             self.an = self.a.dag() * self.a
-
             self.em = 2*self.cavity.kappa*self.an
 
         def get(self, t_series=None):
