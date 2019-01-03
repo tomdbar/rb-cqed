@@ -34,11 +34,11 @@ There are additionally notebooks serving some of the same functionality in [c-pu
 
 ##### [Demos](notebooks-runner-demos/)
 
-A series of demonstration notebooks details how to use OO approach provided by [vStirapRunner](runners/vStirapRunner.py).
+A series of demonstration notebooks details how to use OO approach provided by [vStirapRunner](rb_cqed/rb_cqed.py).
 
 ##### [Bulk](notebooks-bulk/) 
 
-Bulk simulation running using [vStirapRunner](runners/vStirapRunner.py).
+Bulk simulation running using [vStirapRunner](rb_cqed/rb_cqed.py).
 
 - [vStirap-3lvl-optimisation.ipynb](notebooks-bulk/vStirap-3lvl-optimisation.ipynb) - Simple attempts at applying optimisation algorithms to a 3 level system to find the optimum pulse shapes.
 
@@ -46,14 +46,14 @@ Bulk simulation running using [vStirapRunner](runners/vStirapRunner.py).
 
 #### [vStirap runners](runners/)
 
-Contains an object orientied approach to solving the system.  The usage of [vStirapRunner](runners/vStirapRunner.py) is exampled in [notebooks-bulk](notebooks-bulk).
+Contains an object orientied approach to solving the system.  The usage of [vStirapRunner](rb_cqed/rb_cqed.py) is exampled in [notebooks-bulk](notebooks-bulk).
 #### [Mathematica notebooks](mathematica)
 
 The notebooks in the [mathematica](mathematica) folder are not required to run the above models, however they are used to support the model.  Specifically:
 
 - [hamiltonian-derivation.nb](mathematica/hamiltonian-derivation.nb) - Details the derivation of the Hamiltonians used to model the system.  Hopefully this demystifies the relatively complex couplings hardcoded into the IPython notebooks!
 
-- [87rb-d2-in-B-field.nb](mathematica/87rb-d2-in-B-field.nb) - Models the level structure and coupling strengths of the <sup>87</sup>Rb D<sub>2</sub> line in the presence of an exteral magnetic field.  This notebook produces the parameter files in the [params](params) folder, which in turn are imported into the vStirap-xxx-scheme.ipyn notebooks to include nonlinear Zeeman effects.
+- [87rb-d2-in-B-field.nb](mathematica/87rb-d2-in-B-field.nb) - Models the level structure and coupling strengths of the <sup>87</sup>Rb D<sub>2</sub> line in the presence of an exteral magnetic field.  This notebook produces the parameter files in the [params](rb_cqed/atom87rb_params) folder, which in turn are imported into the vStirap-xxx-scheme.ipyn notebooks to include nonlinear Zeeman effects.
 
 - [cavity-parameters](mathematica/cavity-parameters.nb) - A simple helper notebook that calculates the cavity parameters used in our models (such as the linewidth and atom-cavity coupling rates) from physical parameters such as the cavity length, mirror curvatures and so on.  This is intendned to assist in choose physically realistic cavity parameters in the notebooks in which they are not derived.  
 

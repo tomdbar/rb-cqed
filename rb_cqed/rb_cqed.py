@@ -83,7 +83,7 @@ class Atom87Rb(RunnerDataClass):
     '''
     R_AL: np.matrix = np.sqrt(1 / 2) * np.matrix([[1, i],
                                                   [i, 1]])
-    params_file: InitVar[str] = './params/exp_params_0MHz.csv'
+    params_file: InitVar[str] = './atom87rb_params/exp_params_0MHz.csv'
     x_zero_energy_state: InitVar[str] = 'x2'
 
     def __post_init__(self, params_file, x_zero_energy_state):
@@ -161,7 +161,7 @@ class Atom87Rb(RunnerDataClass):
     def __configure_transition_strengths(self, params_dict):
         if self.transition_strengths != {}:
             raise Warning(textwrap.dedent('''\
-                Atom87Rb.transition_strengths are derived from the params file.  Explicitly passed values will be ignored.\
+                Atom87Rb.transition_strengths are derived from the atom87rb_params file.  Explicitly passed values will be ignored.\
                 '''))
         for x in self.x_states.keys():
             self.transition_strengths[x] = {}
@@ -181,7 +181,7 @@ class Atom87Rb(RunnerDataClass):
     def __configure_detunings(self, params_dict, x_zero_energy_state):
         if self.g_detunings != {} or self.x_detunings != {}:
             raise Warning(textwrap.dedent('''\
-                Atom87Rb.*_detunings are derived from the params file.  Explicitly passed values will be ignored.\
+                Atom87Rb.*_detunings are derived from the atom87rb_params file.  Explicitly passed values will be ignored.\
                 '''))
         self.g_detunings, self.x_detunings = {}, {}
 

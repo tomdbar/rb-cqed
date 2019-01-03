@@ -1,0 +1,3 @@
+include README.md
+include rb-cqed/atom87rb_params/*.txt
+include funniest/data.json
