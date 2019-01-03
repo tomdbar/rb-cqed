@@ -1,5 +1,9 @@
 import numpy as np
+np.set_printoptions(threshold=np.inf)
+
 import matplotlib.pyplot as plt
+plt.rcParams['text.usetex'] = True
+
 import copy
 import fileinput
 import textwrap
@@ -12,16 +16,20 @@ from typing import Any
 from abc import ABC, abstractmethod
 from contextlib import redirect_stdout, redirect_stderr
 from itertools import chain, product
+
 import qutip as qt
+
+# Monkey patch the qutip rhs_generate function with our customised version that prepends the constant part of the
+# lagrangian to any time-dependent terms, rather than appending it as is done in qutip version 4.3.1.  Once this
+# bug is fixed in the qutip distribution this monkey patch can be removed.
+from rb_cqed.qutip_patches.rhs_generate import rhs_generate as rhs_generate_patch
+qt.rhs_generate = rhs_generate_patch
 
 try:
     import seaborn as sns
     plt.style.use('seaborn')
 except ImportError:
     pass
-plt.rcParams['text.usetex'] = True
-
-np.set_printoptions(threshold=np.inf)
 
 ##########################################
 # Globals                                #
