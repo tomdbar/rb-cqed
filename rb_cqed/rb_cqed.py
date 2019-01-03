@@ -12,7 +12,7 @@ from typing import Any
 from abc import ABC, abstractmethod
 from contextlib import redirect_stdout, redirect_stderr
 from itertools import chain, product
-from qutip import *
+import qutip as qt
 
 try:
     import seaborn as sns
@@ -661,29 +661,29 @@ class ExperimentalRunner():
         t, t_step = np.linspace(0, t_length, n_steps, retstep=True)
 
         # If the initial state is not a Obj, convert it to a ket using the systems states factory.
-        if not isinstance(psi0, qobj.Qobj):
+        if not isinstance(psi0, qt.qobj.Qobj):
             psi0 = self.compiled_hamiltonian.states.ket(*psi0)
 
         # Clears the rhs memory, so that when we set rhs_reuse to true, it has nothing
         # and so uses our compiled hamiltonian.  We do this as setting rhs_reuse=True
         # prevents the .pyx files from being deleted after the first run.
-        rhs_clear()
+        qt.rhs_clear()
        # opts = Options(rhs_reuse=True, rhs_filename=self.compiled_hamiltonian.name)
-        opts = Options(rhs_filename=self.compiled_hamiltonian.name)
+        opts = qt.Options(rhs_filename=self.compiled_hamiltonian.name)
 
         if self.verbose:
             t_start = time.time()
             print("Running simulation with {0} timesteps".format(n_steps), end="...")
-        solver.config.tdfunc = self.compiled_hamiltonian.tdfunc
-        solver.config.tdname = self.compiled_hamiltonian.name
+        qt.solver.config.tdfunc = self.compiled_hamiltonian.tdfunc
+        qt.solver.config.tdname = self.compiled_hamiltonian.name
 
-        output = mesolve(self.compiled_hamiltonian.hams,
-                         psi0,
-                         t,
-                         self.compiled_hamiltonian.c_op_list,
-                         [],
-                         args=self.compiled_hamiltonian.args_hams,
-                         options=opts)
+        output = qt.mesolve(self.compiled_hamiltonian.hams,
+                            psi0,
+                            t,
+                            self.compiled_hamiltonian.c_op_list,
+                            [],
+                            args=self.compiled_hamiltonian.args_hams,
+                            options=opts)
 
         if self.verbose:
             print("finished in {0} seconds".format(np.round(time.time()-t_start,3)))
@@ -845,10 +845,10 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
 
             try:
                 if verbose:
-                    rhs_generate(self.hams, self.c_op_list, args=self.args_hams, name=self.name, cleanup=cleanup)
+                    qt.rhs_generate(self.hams, self.c_op_list, args=self.args_hams, name=self.name, cleanup=cleanup)
                 else:
                     with io.StringIO() as buf, redirect_stderr(buf):
-                        rhs_generate(self.hams, self.c_op_list, args=self.args_hams, name=self.name, cleanup=cleanup)
+                        qt.rhs_generate(self.hams, self.c_op_list, args=self.args_hams, name=self.name, cleanup=cleanup)
             except Exception as e:
                 if verbose:
                     print("\n\tException in rhs comp: {0}...adding additional setups...".format(str(e)), end='')
@@ -963,9 +963,9 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
 
                 if not self.reconfigurable_decay_rates:
                     # Cavity decay
-                    self.c_op_list.append(np.sqrt(2 * self.cavity.kappa) * tensor(qeye(self.atom.M), destroy(self.cavity.N)))
+                    self.c_op_list.append(np.sqrt(2 * self.cavity.kappa) * qt.tensor(qt.qeye(self.atom.M), qt.destroy(self.cavity.N)))
                 else:
-                    self.c_op_list.append([np.sqrt(2) * tensor(qeye(self.atom.M), destroy(self.cavity.N)), "sqrt_kappa"])
+                    self.c_op_list.append([np.sqrt(2) * qt.tensor(qt.qeye(self.atom.M), qt.destroy(self.cavity.N)), "sqrt_kappa"])
 
                 # Spontaneous decay
                 spont_decay_ops = []
@@ -974,10 +974,10 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
                     for g, x, r in self.atom.get_spontaneous_emission_channels():
                         try:
                             spont_decay_ops.append(np.sqrt(r * 2 * self.atom.gamma) *
-                                                 tensor(
-                                                     basis(self.atom.M, self.atom.get_state_id(g)) *
-                                                     basis(self.atom.M, self.atom.get_state_id(x)).dag(),
-                                                     qeye(self.cavity.N)))
+                                                 qt.tensor(
+                                                     qt.basis(self.atom.M, self.atom.get_state_id(g)) *
+                                                     qt.basis(self.atom.M, self.atom.get_state_id(x)).dag(),
+                                                     qt.qeye(self.cavity.N)))
                         except KeyError:
                             pass
 
@@ -985,10 +985,10 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
                     for g, x, r in self.atom.get_spontaneous_emission_channels():
                         try:
                             spont_decay_ops.append(np.sqrt(r * 2) *
-                                                 tensor(
-                                                     basis(self.atom.M, self.atom.get_state_id(g)) *
-                                                     basis(self.atom.M, self.atom.get_state_id(x)).dag(),
-                                                     qeye(self.cavity.N)))
+                                                 qt.tensor(
+                                                     qt.basis(self.atom.M, self.atom.get_state_id(g)) *
+                                                     qt.basis(self.atom.M, self.atom.get_state_id(x)).dag(),
+                                                     qt.qeye(self.cavity.N)))
                         except KeyError:
                             pass
                     spont_decay_ops = [[sum(spont_decay_ops), 'sqrt_gamma']]
@@ -1118,7 +1118,7 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
 
         def _get_dummy_coupling(self):
             M, N = self.atom.M, self.cavity.N
-            return tensor(qobj.Qobj(np.zeros((M, M))), qobj.Qobj(np.zeros((N, N))))
+            return qt.tensor(qt.qobj.Qobj(np.zeros((M, M))), qt.qobj.Qobj(np.zeros((N, N))))
 
     class _CompiledHamiltonianCavityBiref(_CompiledHamiltonian):
 
@@ -1143,8 +1143,8 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
                 R_MC = self.cavity.R_CL.getH() * self.cavity.R_ML
                 alpha_MC, beta_MC, phi1_MC, phi2_MC = R2args(R_MC)
 
-                aX = tensor(qeye(self.atom.M), destroy(self.cavity.N), qeye(self.cavity.N))
-                aY = tensor(qeye(self.atom.M), qeye(self.cavity.N), destroy(self.cavity.N))
+                aX = qt.tensor(qt.qeye(self.atom.M), qt.destroy(self.cavity.N), qt.qeye(self.cavity.N))
+                aY = qt.tensor(qt.qeye(self.atom.M), qt.qeye(self.cavity.N), qt.destroy(self.cavity.N))
 
                 aM1X = np.conj(np.exp(i * phi1_MC) * alpha_MC) * aX
                 aM1Y = np.conj(np.exp(i * phi2_MC) * beta_MC) * aY
@@ -1153,37 +1153,37 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
 
                 # Group collapse terms into fewest operators for speed.
                 if not self.reconfigurable_decay_rates:
-                    self.c_op_list.append(2 * self.cavity.kappa1 * lindblad_dissipator(aM1X) +
-                                          2 * self.cavity.kappa1 * lindblad_dissipator(aM1Y) +
-                                          2 * self.cavity.kappa2 * lindblad_dissipator(aM2X) +
-                                          2 * self.cavity.kappa2 * lindblad_dissipator(aM2Y))
-                    self.c_op_list.append([2 * self.cavity.kappa1 * (sprepost(aM1Y, aM1X.dag())
-                                                                - 0.5 * spost(aM1X.dag() * aM1Y)
-                                                                - 0.5 * spre(aM1X.dag() * aM1Y)) +
-                                           2 * self.cavity.kappa2 * (sprepost(aM2Y, aM2X.dag())
-                                                                - 0.5 * spost(aM2X.dag() * aM2Y)
-                                                                - 0.5 * spre(aM2X.dag() * aM2Y)),
+                    self.c_op_list.append(2 * self.cavity.kappa1 * qt.lindblad_dissipator(aM1X) +
+                                          2 * self.cavity.kappa1 * qt.lindblad_dissipator(aM1Y) +
+                                          2 * self.cavity.kappa2 * qt.lindblad_dissipator(aM2X) +
+                                          2 * self.cavity.kappa2 * qt.lindblad_dissipator(aM2Y))
+                    self.c_op_list.append([2 * self.cavity.kappa1 * (qt.sprepost(aM1Y, aM1X.dag())
+                                                                - 0.5 * qt.spost(aM1X.dag() * aM1Y)
+                                                                - 0.5 * qt.spre(aM1X.dag() * aM1Y)) +
+                                           2 * self.cavity.kappa2 * (qt.sprepost(aM2Y, aM2X.dag())
+                                                                - 0.5 * qt.spost(aM2X.dag() * aM2Y)
+                                                                - 0.5 * qt.spre(aM2X.dag() * aM2Y)),
                                            'exp(i*deltaP*t)'])
-                    self.c_op_list.append([2 * self.cavity.kappa1 * (sprepost(aM1X, aM1Y.dag())
-                                                                - 0.5 * spost(aM1Y.dag() * aM1X)
-                                                                - 0.5 * spre(aM1Y.dag() * aM1X)) +
-                                           2 * self.cavity.kappa2 * (sprepost(aM2X, aM2Y.dag())
-                                                                - 0.5 * spost(aM2Y.dag() * aM2X)
-                                                                - 0.5 * spre(aM2Y.dag() * aM2X)),
+                    self.c_op_list.append([2 * self.cavity.kappa1 * (qt.sprepost(aM1X, aM1Y.dag())
+                                                                - 0.5 * qt.spost(aM1Y.dag() * aM1X)
+                                                                - 0.5 * qt.spre(aM1Y.dag() * aM1X)) +
+                                           2 * self.cavity.kappa2 * (qt.sprepost(aM2X, aM2Y.dag())
+                                                                - 0.5 * qt.spost(aM2Y.dag() * aM2X)
+                                                                - 0.5 * qt.spre(aM2Y.dag() * aM2X)),
                                            'exp(-i*deltaP*t)'])
                 else:
                     self.c_op_list += \
-                        [[2 * lindblad_dissipator(aM1X) + 2 * lindblad_dissipator(aM1Y),
+                        [[2 * qt.lindblad_dissipator(aM1X) + 2 * qt.lindblad_dissipator(aM1Y),
                           'kappa1'],
-                         [2 * lindblad_dissipator(aM2X) + 2 * lindblad_dissipator(aM2Y),
+                         [2 * qt.lindblad_dissipator(aM2X) + 2 * qt.lindblad_dissipator(aM2Y),
                           'kappa2'],
-                         [2 * (sprepost(aM1Y, aM1X.dag()) - 0.5 * spost(aM1X.dag() * aM1Y) - 0.5 * spre(aM1X.dag() * aM1Y)),
+                         [2 * (qt.sprepost(aM1Y, aM1X.dag()) - 0.5 * qt.spost(aM1X.dag() * aM1Y) - 0.5 * qt.spre(aM1X.dag() * aM1Y)),
                           'kappa1 * exp(i*deltaP*t)'],
-                         [2 * (sprepost(aM2Y, aM2X.dag()) - 0.5 * spost(aM2X.dag() * aM2Y) - 0.5 * spre(aM2X.dag() * aM2Y)),
+                         [2 * (qt.sprepost(aM2Y, aM2X.dag()) - 0.5 * qt.spost(aM2X.dag() * aM2Y) - 0.5 * qt.spre(aM2X.dag() * aM2Y)),
                           'kappa2 * exp(i*deltaP*t)'],
-                         [2 * (sprepost(aM1X, aM1Y.dag()) - 0.5 * spost(aM1Y.dag() * aM1X) - 0.5 * spre(aM1Y.dag() * aM1X)),
+                         [2 * (qt.sprepost(aM1X, aM1Y.dag()) - 0.5 * qt.spost(aM1Y.dag() * aM1X) - 0.5 * qt.spre(aM1Y.dag() * aM1X)),
                           'kappa1 * exp(-i*deltaP*t)'],
-                         [2 * (sprepost(aM2X, aM2Y.dag()) - 0.5 * spost(aM2Y.dag() * aM2X) - 0.5 * spre(aM2Y.dag() * aM2X)),
+                         [2 * (qt.sprepost(aM2X, aM2Y.dag()) - 0.5 * qt.spost(aM2Y.dag() * aM2X) - 0.5 * qt.spre(aM2Y.dag() * aM2X)),
                           'kappa2 * exp(-i*deltaP*t)']]
 
                 # Spontaneous decay
@@ -1194,11 +1194,11 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
                         try:
                             # r * spont_decay_ops.append(np.sqrt(2 * self.atom.gamma) *
                             spont_decay_ops.append(np.sqrt(r * 2 * self.atom.gamma) *
-                                                 tensor(
-                                                     basis(self.atom.M, self.atom.get_state_id(g)) *
-                                                     basis(self.atom.M, self.atom.get_state_id(x)).dag(),
-                                                     qeye(self.cavity.N),
-                                                     qeye(self.cavity.N)))
+                                                 qt.tensor(
+                                                     qt.basis(self.atom.M, self.atom.get_state_id(g)) *
+                                                     qt.basis(self.atom.M, self.atom.get_state_id(x)).dag(),
+                                                     qt.qeye(self.cavity.N),
+                                                     qt.qeye(self.cavity.N)))
                         except KeyError:
                             pass
 
@@ -1206,11 +1206,11 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
                     for g, x, r in self.atom.get_spontaneous_emission_channels():
                         try:
                             spont_decay_ops.append(np.sqrt(r * 2) *
-                                                 tensor(
-                                                     basis(self.atom.M, self.atom.get_state_id(g)) *
-                                                     basis(self.atom.M, self.atom.get_state_id(x)).dag(),
-                                                     qeye(self.cavity.N),
-                                                     qeye(self.cavity.N)))
+                                                 qt.tensor(
+                                                     qt.basis(self.atom.M, self.atom.get_state_id(g)) *
+                                                     qt.basis(self.atom.M, self.atom.get_state_id(x)).dag(),
+                                                     qt.qeye(self.cavity.N),
+                                                     qt.qeye(self.cavity.N)))
                         except KeyError:
                             pass
                     spont_decay_ops = [[sum(spont_decay_ops), 'sqrt_gamma']]
@@ -1401,7 +1401,7 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
 
         def _get_dummy_coupling(self):
             M, N = self.atom.M, self.cavity.N
-            return tensor(qobj.Qobj(np.zeros((M, M))), qobj.Qobj(np.zeros((N, N))), qobj.Qobj(np.zeros((N, N))))
+            return qt.tensor(qt.qobj.Qobj(np.zeros((M, M))), qt.qobj.Qobj(np.zeros((N, N))), qt.qobj.Qobj(np.zeros((N, N))))
 
 #todo: make color ordering the same for all results
 class ExperimentalResultsFactory():
@@ -1488,7 +1488,7 @@ class ExperimentalResultsFactory():
 
         def get_spontaneous_emission(self, i_output=[]):
             sp_op = self.atomic_operators.get_sp_op()
-            return expect(sp_op, self._get_output_states(i_output))
+            return qt.expect(sp_op, self._get_output_states(i_output))
 
         def get_total_spontaneous_emission(self):
             exp_sp = self.get_spontaneous_emission()
@@ -1575,17 +1575,17 @@ class ExperimentalResultsFactory():
     class _ExperimentalResultsSingle(_ExperimentalResults):
 
         def get_cavity_emission(self, i_output=[]):
-            return np.abs(expect(self.emission_operators.get(), self._get_output_states(i_output)))
+            return np.abs(qt.expect(self.emission_operators.get(), self._get_output_states(i_output)))
 
         def get_total_cavity_emission(self):
             return np.trapz(self.get_cavity_emission(), dx=self.tStep)
 
         def get_cavity_number(self, i_output=[]):
-            return np.abs(expect(self.number_operators.get(), self._get_output_states(i_output)))
+            return np.abs(qt.expect(self.number_operators.get(), self._get_output_states(i_output)))
 
         def get_atomic_population(self, states=[], i_output=[]):
             at_ops = self.atomic_operators.get_at_op(states)
-            return np.abs(expect(at_ops, self._get_output_states(i_output)))
+            return np.abs(qt.expect(at_ops, self._get_output_states(i_output)))
 
         def _plot_cavity_summary(self, abs_tol=1e-10):
             exp_an = self._chop_plot_array(self.get_cavity_number())
@@ -1639,7 +1639,7 @@ class ExperimentalResultsFactory():
             emP_t, emM_t = self.emission_operators.get(self.output.times, R_ZL)
 
             emP, emM = np.abs(np.array(
-                [expect(list(an_list), state) for an_list, state in
+                [qt.expect(list(an_list), state) for an_list, state in
                  zip(zip(emP_t, emM_t), self._get_output_states(i_output))]
             )).T
 
@@ -1656,7 +1656,7 @@ class ExperimentalResultsFactory():
             anP_t, anM_t = self.number_operators.get(self.output.times, R_ZL)
 
             anP, anM = np.abs(np.array(
-                [expect(list(an_list), state) for an_list, state in
+                [qt.expect(list(an_list), state) for an_list, state in
                  zip(zip(anP_t, anM_t), self._get_output_states(i_output))]
             )).T
 
@@ -1664,11 +1664,11 @@ class ExperimentalResultsFactory():
 
         def get_atomic_population(self, states=[], i_output=[]):
             at_ops = self.atomic_operators.get_at_op(states)
-            return np.abs(expect(at_ops, self._get_output_states(i_output)))
+            return np.abs(qt.expect(at_ops, self._get_output_states(i_output)))
 
         def get_spontaneous_emission(self, i_output=[]):
             sp_op = self.atomic_operators.get_sp_op()
-            return expect(sp_op, self._get_output_states(i_output))
+            return qt.expect(sp_op, self._get_output_states(i_output))
 
         def get_total_spontaneous_emission(self):
             exp_sp = self.get_spontaneous_emission()
@@ -1871,7 +1871,7 @@ class EmissionOperatorsFactory(metaclass=Singleton):
         def __init__(self, *args):
             super().__init__(*args)
 
-            self.a = tensor(qeye(self.atom.M), destroy(self.cavity.N))
+            self.a = qt.tensor(qt.qeye(self.atom.M), qt.destroy(self.cavity.N))
             self.an = self.a.dag() * self.a
             self.em = 2*self.cavity.kappa*self.an
 
@@ -2028,7 +2028,7 @@ class NumberOperatorsFactory(metaclass=Singleton):
         def __init__(self, *args):
             super().__init__(*args)
 
-            self.a = tensor(qeye(self.atom.M), destroy(self.cavity.N))
+            self.a = qt.tensor(qt.qeye(self.atom.M), qt.destroy(self.cavity.N))
             self.an = self.a.dag() * self.a
 
         def get(self, t_series=None):
@@ -2154,9 +2154,9 @@ class AtomicOperatorsFactory(metaclass=Singleton):
                 try:
                     # spont_decay_ops.append(branching_ratio * np.sqrt(2 * self.atom.gamma) *
                     spont_decay_ops.append(np.sqrt(r * 2 * self.atom.gamma) *
-                                           tensor(
-                                             basis(self.atom.M, self.atom.get_state_id(g)) * basis(self.atom.M, self.atom.get_state_id(x)).dag(),
-                                             qeye(Cavity.N)))
+                                           qt.tensor(
+                                             qt.basis(self.atom.M, self.atom.get_state_id(g)) * qt.basis(self.atom.M, self.atom.get_state_id(x)).dag(),
+                                             qt.qeye(Cavity.N)))
                 except KeyError:
                     pass
 
@@ -2183,10 +2183,10 @@ class AtomicOperatorsFactory(metaclass=Singleton):
                 try:
                     # spont_decay_ops.append(branching_ratio * np.sqrt(2 * self.atom.gamma) *
                     spont_decay_ops.append(np.sqrt(r * 2 * self.atom.gamma) *
-                                           tensor(
-                                             basis(self.atom.M, self.atom.get_state_id(g)) * basis(self.atom.M, self.atom.get_state_id(x)).dag(),
-                                             qeye(Cavity.N),
-                                             qeye(Cavity.N)))
+                                           qt.tensor(
+                                             qt.basis(self.atom.M, self.atom.get_state_id(g)) * qt.basis(self.atom.M, self.atom.get_state_id(x)).dag(),
+                                             qt.qeye(Cavity.N),
+                                             qt.qeye(Cavity.N)))
                 except KeyError:
                     pass
 
@@ -2255,8 +2255,8 @@ class StatesFactory(metaclass=Singleton):
             try:
                 ket = self.kets[str([atom_state, cav])]
             except KeyError:
-                ket = tensor(basis(self.atom.M, self.atom.get_state_id(atom_state)),
-                             basis(self.cavity.N, cav))
+                ket = qt.tensor(qt.basis(self.atom.M, self.atom.get_state_id(atom_state)),
+                             qt.basis(self.cavity.N, cav))
                 self.kets[str([atom_state, cav])] = ket
 
             return ket
@@ -2265,8 +2265,8 @@ class StatesFactory(metaclass=Singleton):
             try:
                 bra = self.bras[str([atom_state, cav])]
             except KeyError:
-                bra = tensor(basis(self.atom.M, self.atom.get_state_id(atom_state)),
-                             basis(self.cavity.N, cav)).dag()
+                bra = qt.tensor(qt.basis(self.atom.M, self.atom.get_state_id(atom_state)),
+                             qt.basis(self.cavity.N, cav)).dag()
                 self.bras[str([atom_state, cav])] = bra
 
             return bra
@@ -2284,9 +2284,9 @@ class StatesFactory(metaclass=Singleton):
             try:
                 ket = self.kets[str([atom_state, cav_X, cav_Y])]
             except KeyError:
-                ket = tensor(basis(self.atom.M, self.atom.get_state_id(atom_state)),
-                             basis(self.cavity.N, cav_X),
-                             basis(self.cavity.N, cav_Y))
+                ket = qt.tensor(qt.basis(self.atom.M, self.atom.get_state_id(atom_state)),
+                             qt.basis(self.cavity.N, cav_X),
+                             qt.basis(self.cavity.N, cav_Y))
                 self.kets[str([atom_state, cav_X, cav_Y])] = ket
 
             return ket
@@ -2295,9 +2295,9 @@ class StatesFactory(metaclass=Singleton):
             try:
                 bra = self.bras[str([atom_state, cav_X, cav_Y])]
             except KeyError:
-                bra = tensor(basis(self.atom.M, self.atom.get_state_id(atom_state)),
-                             basis(self.cavity.N, cav_X),
-                             basis(self.cavity.N, cav_Y)).dag()
+                bra = qt.tensor(qt.basis(self.atom.M, self.atom.get_state_id(atom_state)),
+                             qt.basis(self.cavity.N, cav_X),
+                             qt.basis(self.cavity.N, cav_Y)).dag()
                 self.bras[str([atom_state, cav_X, cav_Y])] = bra
 
             return bra
