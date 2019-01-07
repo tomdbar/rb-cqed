@@ -1,4 +1,4 @@
-from unittest import TestCase
+from unittest import TestCase, SkipTest
 
 import numpy as np
 import copy
@@ -171,5 +171,100 @@ class TestRabiOscillations(TestCase):
                               0.33216])
 
         for meas, exp in zip([pop_gP, pop_g, pop_gM, pop_x], [exp_pop_gP, exp_pop_g, exp_pop_gM, exp_pop_x]):
+            for a, b in zip(meas, exp):
+                self.assertAlmostEqual(a, b, delta=abs_tol)
+
+class TestVStirap(TestCase):
+    '''
+    TestRabiOscillations
+    '''
+
+    @classmethod
+    def setUpClass(cls):
+        cls.atom4lvl_default = Atom4lvl(gamma=0)
+        cls.cav_default = Cavity(g=5 * 2. * np.pi,
+                                 kappa=5. * 2. * np.pi)
+
+        cls.cavity_coupling_default = CavityCoupling(g0=cls.cav_default.g,
+                                                     g='gP', x='x',
+                                                     deltaC=0 * 2 * np.pi,
+                                                     deltaM=[1, -1],
+                                                     couple_off_resonance=False)
+
+        cls.psi0 = ['gM', 0]
+        cls.t_length = 1
+        cls.n_steps = 501
+
+    def setUp(self):
+        self.atom4lvl = copy.copy(self.atom4lvl_default)
+        self.cav = copy.copy(self.cav_default)
+        self.cavity_coupling = copy.copy(self.cavity_coupling_default)
+
+    def _run_experiment(self):
+        return ExperimentalRunner(
+            atom=self.atom4lvl,
+            cavity=self.cav,
+            laser_couplings=self.laser_coupling,
+            cavity_couplings=self.cavity_coupling,
+            verbose=True
+        ).run(self.psi0, self.t_length, self.n_steps)
+
+    def test_py_pulse(self):
+        length_pulse = 1
+        self.laser_coupling = LaserCoupling(omega0=5 * 2 * np.pi,
+                                            g='gM', x='x',
+                                            deltaL=0 * 2 * np.pi,
+                                            deltaM=[1, -1],
+                                            pulse_shape='np.piecewise(t, [t<length_pulse], [np.sin((np.pi/length_pulse)*t)**2,0])',
+                                            args_ham={"length_pulse": length_pulse},
+                                            couple_off_resonance=False
+                                            )
+
+        results = self._run_experiment()
+        self.check_results(results)
+
+    def test_c_pulse(self):
+        pulse_c_str = \
+'''
+@cython.cdivision(True)
+@cython.boundscheck(False)
+@cython.wraparound(False)
+cdef double complex pulse_c(float t, float t_start, float t_end, float omega):
+    if t_start<=t<=t_end: return sin(omega*(t-t_start))**2
+    else: return 0
+'''
+
+        length_pulse = 1
+        w_pulse = np.pi / length_pulse
+
+        self.laser_coupling = LaserCoupling(omega0=5 * 2 * np.pi,
+                                            g='gM', x='x',
+                                            deltaL=0 * 2 * np.pi,
+                                            deltaM=[1, -1],
+                                            pulse_shape='pulse_c(t, 0, length_pulse, w_pulse)',
+                                            args_ham={"length_pulse": length_pulse,
+                                                      "w_pulse": w_pulse},
+                                            setup_pyx=[''],
+                                            add_pyx=[pulse_c_str],
+                                            couple_off_resonance=False)
+
+        results = self._run_experiment()
+        self.check_results(results)
+
+    def check_results(self, results):
+
+        emm = results.get_total_cavity_emission()
+        exp_emm = 0.99682
+        self.assertAlmostEqual(emm, exp_emm, delta=abs_tol)
+
+        pop_gM, pop_x = results.get_atomic_population(['gM', 'x'])[:,
+                        [0, 50, 100, 150, 200, 250, 300, 400, 500]]
+
+        exp_pop_gM = np.array([1., 0.99799, 0.92714, 0.61125, 0.21337, 0.04808, 0.01239, 0.00343,
+                               0.00318])
+        exp_pop_x = np.array([0., 0.00137, 0.02682, 0.07246, 0.04931, 0.01091, 0.00211, 0.00009,
+                              0.])
+
+        for meas, exp in zip([pop_gM, pop_x], [exp_pop_gM, exp_pop_x]):
             for a, b in zip(meas, exp):
                 self.assertAlmostEqual(a, b, delta=abs_tol)

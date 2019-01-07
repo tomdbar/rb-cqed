@@ -64,10 +64,67 @@ def rhs_clear():
     config.string = None     # Holds string of variables to be passed to solver
     config.tdname = None     # Name of td .pyx file (used in parallel mc code)
 
-
 def rhs_generate(H, c_ops, args={}, options=Options(), name=None,
                  cleanup=True):
     """
+    --------------------
+    TDB documentation
+    --------------------
+    This is the standard qutip.rhs_generate function split into two steps:
+        rhs_prepare: prepares the .pyx file ready for compilation,
+        rhs_compile: complies the .pyx file into a Cython function.
+    This is done to allow further customised editing of the .pyx file prior
+    to compilation for specific use-cases (such as c-defined pulse shapes).
+
+    --------------------
+    qutip documentation
+    --------------------
+        Generates the Cython functions needed for solving the dynamics of a
+        given system using the mesolve function inside a parfor loop.
+
+        Parameters
+        ----------
+        H : qobj
+            System Hamiltonian.
+
+        c_ops : list
+            ``list`` of collapse operators.
+
+        args : dict
+            Arguments for time-dependent Hamiltonian and collapse operator terms.
+
+        options : Options
+            Instance of ODE solver options.
+
+        name: str
+            Name of generated RHS
+
+        cleanup: bool
+            Whether the generated cython file should be automatically removed or
+            not.
+
+        Notes
+        -----
+        Using this function with any solver other than the mesolve function
+        will result in an error.
+
+        """
+    rhs_prepare(H, c_ops, args, options, name)
+    rhs_compile(cleanup)
+
+def rhs_prepare(H, c_ops, args={}, options=Options(), name=None):
+    """
+     --------------------
+    TDB documentation
+    --------------------
+    This is simply everything in the standard qutip.rhs_generate function upto
+    the point where the pyx file is compiled.  This includes the patched
+    behaviour to prepend the constant part of the Lagrangian in the correct way.
+
+    --------------------
+    qutip documentation
+    --------------------
+
     Generates the Cython functions needed for solving the dynamics of a
     given system using the mesolve function inside a parfor loop.
 
@@ -87,10 +144,6 @@ def rhs_generate(H, c_ops, args={}, options=Options(), name=None,
 
     name: str
         Name of generated RHS
-
-    cleanup: bool
-        Whether the generated cython file should be automatically removed or
-        not.
 
     Notes
     -----
@@ -218,6 +271,33 @@ def rhs_generate(H, c_ops, args={}, options=Options(), name=None,
                    config=config)
     cgen.generate(config.tdname + ".pyx")
 
+def rhs_compile(cleanup):
+    """
+    --------------------
+    TDB documentation
+    --------------------
+    This is simply everything in the standard qutip.rhs_generate function that
+    compiles an already prepared .pyx file into a Cython function.
+
+    --------------------
+    qutip documentation
+    --------------------
+
+    Generates the Cython functions needed for solving the dynamics of a
+    given system using the mesolve function inside a parfor loop.
+
+    Parameters
+    ----------
+    cleanup: bool
+            Whether the generated cython file should be automatically removed or
+            not.
+
+    Notes
+    -----
+    Using this function with any solver other than the mesolve function
+    will result in an error.
+
+    """
     code = compile('from ' + config.tdname +
                    ' import cy_td_ode_rhs', '<string>', 'exec')
     exec(code, globals())

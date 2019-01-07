@@ -25,6 +25,10 @@ import qutip as qt
 from rb_cqed.qutip_patches.rhs_generate import rhs_generate as rhs_generate_patch
 qt.rhs_generate = rhs_generate_patch
 
+# For certain applications we want to further edit the auto-generated .pyx files prior to their compilation into
+# Cython function, so here we import the two steps ran within rhs_generate to allow us this option.
+from rb_cqed.qutip_patches.rhs_generate import rhs_prepare, rhs_compile
+
 try:
     import seaborn as sns
     plt.style.use('seaborn')
@@ -850,15 +854,24 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
             else:
                 cleanup = False
 
-            try:
+            customise_pyx = False
+            for laser_couping in self.laser_couplings:
+                if laser_couping.setup_pyx != [] or laser_couping.add_pyx != []:
+                    customise_pyx = True
+                    break
+
+            if not customise_pyx:
                 if verbose:
-                    qt.rhs_generate(self.hams, self.c_op_list, args=self.args_hams, name=self.name, cleanup=cleanup)
-                else:
-                    with io.StringIO() as buf, redirect_stderr(buf):
-                        qt.rhs_generate(self.hams, self.c_op_list, args=self.args_hams, name=self.name, cleanup=cleanup)
-            except Exception as e:
+                    print("\n\tcompiling Cython function with rhs_generate(...)", end='...')
+                qt.rhs_generate(self.hams, self.c_op_list, args=self.args_hams, name=self.name, cleanup=cleanup)
+
+            else:
                 if verbose:
-                    print("\n\tException in rhs comp: {0}...adding additional setups...".format(str(e)), end='')
+                    print("\n\tadditional setup required:\n\t\tpreparing .pyx file with rhs_prepare(...)", end='...')
+                rhs_prepare(self.hams, self.c_op_list, args=self.args_hams, name=self.name)
+
+                if verbose:
+                    print("\n\t\tcustomising .pyx file", end='...')
                 for laser_couping in self.laser_couplings:
                     if laser_couping.setup_pyx != [] or laser_couping.add_pyx != []:
                         with fileinput.FileInput(self.name + '.pyx', inplace=True) as file:
@@ -876,9 +889,38 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
                                 print(line, end='')
                             fileinput.close()
                 if verbose:
-                    print("and trying rhs generate again...", end='')
-                code = compile('from ' + self.name + ' import cy_td_ode_rhs', '<string>', 'exec')
-                exec(code, globals())
+                    print("\n\t\tcompiling Cython function with rhs_compile", end='...')
+                rhs_compile(cleanup)
+
+            # try:
+            #     if verbose:
+            #         qt.rhs_generate(self.hams, self.c_op_list, args=self.args_hams, name=self.name, cleanup=cleanup)
+            #     else:
+            #         with io.StringIO() as buf, redirect_stderr(buf):
+            #             qt.rhs_generate(self.hams, self.c_op_list, args=self.args_hams, name=self.name, cleanup=cleanup)
+            # except Exception as e:
+            #     if verbose:
+            #         print("\n\tException in rhs comp: {0}...adding additional setups...".format(str(e)), end='')
+            #     for laser_couping in self.laser_couplings:
+            #         if laser_couping.setup_pyx != [] or laser_couping.add_pyx != []:
+            #             with fileinput.FileInput(self.name + '.pyx', inplace=True) as file:
+            #                 toWrite_setup = True
+            #                 toWrite_add = True
+            #                 for line in file:
+            #                     if '#' not in line and toWrite_setup:
+            #                         for input in laser_couping.setup_pyx:
+            #                             print(input, end='\n')
+            #                         toWrite_setup = False
+            #                     if '@cython.cdivision(True)' in line and toWrite_add:
+            #                         for input in laser_couping.add_pyx:
+            #                             print(input, end='\n')
+            #                         toWrite_add = False
+            #                     print(line, end='')
+            #                 fileinput.close()
+            #     if verbose:
+            #         print("and trying rhs generate again...", end='')
+            #     code = compile('from ' + self.name + ' import cy_td_ode_rhs', '<string>', 'exec')
+            #     exec(code, globals())
 
             if cleanup==True:
                 try:
@@ -1841,7 +1883,7 @@ class EmissionOperatorsFactory(metaclass=Singleton):
     def get(cls, atom, cavity, ketbras, verbose):
         for em_op in cls.emission_operators:
             if em_op._is_compatible(atom, cavity):
-                if verbose: print("\tFound suitable _EmissionOperators obj for setup.")
+                if verbose: print("\n\tFound suitable _EmissionOperators obj for setup.", end='')
                 return em_op
         else:
             if type(cavity)==Cavity:
@@ -1856,7 +1898,7 @@ class EmissionOperatorsFactory(metaclass=Singleton):
     class _EmissionOperators(ABC):
 
         def __init__(self, atom, cavity, ketbras, verbose):
-            if verbose: print("\tCreating new _EmissionOperators obj for setup.")
+            if verbose: print("\n\tCreating new _EmissionOperators obj for setup.", end='')
 
             self.atom = atom
             self.cavity = cavity
@@ -1906,12 +1948,12 @@ class EmissionOperatorsFactory(metaclass=Singleton):
         def get(self, t_series, R_ZL):
             for t, R, kappa1, kappa2, deltaP, op_series in self.operator_series:
                 if all([np.array_equal(t, t_series), np.array_equal(R, R_ZL)]):
-                    if self.verbose: print("\tFound suitable pre-computed emission operator series.")
+                    if self.verbose: print("\n\tFound suitable pre-computed emission operator series.", end='')
                     return op_series
             return self.__generate(t_series, R_ZL)
 
         def __generate(self, t_series, R_ZL):
-            if self.verbose: print("\tCreating new number operator series.")
+            if self.verbose: print("\n\tCreating new number operator series.", end='')
             R_ZM = self.cavity.R_ML.getH() * R_ZL
 
             alpha_ZM, beta_ZM, phi1_ZM, phi2_ZM = R2args(R_ZM)
@@ -1997,7 +2039,7 @@ class NumberOperatorsFactory(metaclass=Singleton):
     def get(cls, atom, cavity, ketbras, verbose):
         for an_op in cls.number_operators:
             if an_op._is_compatible(atom, cavity):
-                if verbose: print("\tFound suitable _NumberOperators obj for setup.")
+                if verbose: print("\n\tFound suitable _NumberOperators obj for setup.", end='')
                 return an_op
         else:
             if type(cavity)==Cavity:
@@ -2013,7 +2055,7 @@ class NumberOperatorsFactory(metaclass=Singleton):
 
         def __init__(self, atom, cavity, ketbras, verbose):
 
-            if verbose: print("\tCreating new _NumberOperators obj for setup.")
+            if verbose: print("\n\tCreating new _NumberOperators obj for setup.", end='')
 
             self.atom = atom
             self.cavity = cavity
@@ -2063,12 +2105,12 @@ class NumberOperatorsFactory(metaclass=Singleton):
                 if all([np.array_equal(t,t_series),
                         np.array_equal(R, R_ZL),
                         deltaP==self.cavity.deltaP]):
-                    if self.verbose: print("\tFound suitable pre-computed number operator series.")
+                    if self.verbose: print("\n\tFound suitable pre-computed number operator series.", end='')
                     return op_series
             return self.__generate(t_series, R_ZL)
 
         def __generate(self, t_series, R_ZL):
-            if self.verbose: print("\tCreating new number operator series.")
+            if self.verbose: print("\n\tCreating new number operator series.", end='')
             R_ZC = self.cavity.R_CL.getH() * R_ZL
 
             alpha_ZC, beta_ZC, phi1_ZC, phi2_ZC = R2args(R_ZC)
@@ -2101,7 +2143,7 @@ class AtomicOperatorsFactory(metaclass=Singleton):
             if at_op._is_compatible(atom):
                 if (type(cavity)==Cavity and type(at_op)==cls._AtomicOperatorsCavitySingle) or \
                    (type(cavity)==CavityBiref and type(at_op)==cls._AtomicOperatorsCavityBiref):
-                    if verbose: print("\tFound suitable _AtomicOperators obj for setup.")
+                    if verbose: print("\n\tFound suitable _AtomicOperators obj for setup.", end='')
                     return at_op
         else:
             if type(cavity)==Cavity:
@@ -2116,7 +2158,7 @@ class AtomicOperatorsFactory(metaclass=Singleton):
     class _AtomicOperators():
 
         def __init__(self, atom, ketbras, verbose):
-            if verbose: print("\tCreating new _AtomicOperators obj for setup.")
+            if verbose: print("\n\tCreating new _AtomicOperators obj for setup.", end='')
 
             self.atom = atom
             self.ketbras = ketbras
@@ -2207,7 +2249,7 @@ class StatesFactory(metaclass=Singleton):
     def get(cls, atom, cavity, verbose=False):
         for s in cls.states:
             if s._is_compatible(atom, cavity):
-                if verbose: print("\tFound suitable _States obj for setup.")
+                if verbose: print("\n\tFound suitable _States obj for setup.", end='')
                 return s
         else:
             if type(cavity)==Cavity:
