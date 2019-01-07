@@ -46,7 +46,6 @@ def R2args(R):
 ##########################################
 # Data Classes                           #
 ##########################################
-#TODO: turn RunnerDataClass into ABC and drop dataclass decorators?
 @dataclass(eq=False)
 class RunnerDataClass:
 
