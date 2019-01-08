@@ -7,14 +7,14 @@ setup(name='rb_cqed',
       author='Tom Barrett',
       author_email='t.d.barrett91@gmail.com',
       license='MIT',
-      packages=['rb_cqed'],
+      packages=['rb_cqed', 'rb_cqed/qutip_patches', 'rb_cqed/tests', 'rb_cqed/atom87rb_params'],
       setup_requires=[
-          'qutip==4.3.1',
+          'qutip>=4.3.1',
           'dataclasses>=0.6',
           'seaborn>=0.8'
       ],
       install_requires=[
-          'qutip==4.3.1',
+          'qutip>=4.3.1',
           'dataclasses>=0.6',
           'seaborn>=0.8'
       ],

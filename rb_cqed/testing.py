@@ -1,8 +1,7 @@
 def run():
     """
-    Run the nose test scripts for QuTiP.
+    Run the nose test scripts for rb_cqed.
     """
-    # Call about to get all version info printed with tests
     import nose
-    # runs tests in qutip.tests module only
+    # runs tests in rb_cqed.tests module only
     nose.run(defaultTest="rb_cqed.tests", argv=['nosetests', '-v'])
