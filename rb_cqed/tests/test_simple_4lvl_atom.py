@@ -209,7 +209,7 @@ class TestVStirap(TestCase):
             verbose=True
         ).run(self.psi0, self.t_length, self.n_steps)
 
-    def test_py_pulse(self):
+    def test_vstirap_with_py_pulse(self):
         length_pulse = 1
         self.laser_coupling = LaserCoupling(omega0=5 * 2 * np.pi,
                                             g='gM', x='x',
@@ -223,7 +223,7 @@ class TestVStirap(TestCase):
         results = self._run_experiment()
         self.check_results(results)
 
-    def test_c_pulse(self):
+    def test_vstirap_with_c_pulse(self):
         pulse_c_str = \
 '''
 @cython.cdivision(True)

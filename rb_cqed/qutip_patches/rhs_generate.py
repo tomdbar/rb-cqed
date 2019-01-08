@@ -44,7 +44,6 @@ from qutip.qobj import Qobj
 from qutip.superoperator import spre, spost
 from qutip.interpolate import Cubic_Spline
 
-
 def rhs_clear():
     """
     Resets the string-format time-dependent Hamiltonian parameters.
