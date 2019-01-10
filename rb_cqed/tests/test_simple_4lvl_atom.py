@@ -1,12 +1,13 @@
 from unittest import TestCase, SkipTest
+from rb_cqed import *
 
 import numpy as np
 import copy
-from rb_cqed.rb_cqed import ExperimentalRunner, Atom4lvl, Cavity, LaserCoupling, CavityCoupling
 
 # Set the absolute tolerance of the tests.
 abs_tol = 1e-4
 
+# @SkipTest
 class TestVacuumRabiOscillations(TestCase):
     '''
     TestVacuumRabiOscillations
@@ -96,6 +97,7 @@ class TestVacuumRabiOscillations(TestCase):
             for a, b in zip(meas, exp):
                 self.assertAlmostEqual(a, b, delta=abs_tol)
 
+# @SkipTest
 class TestRabiOscillations(TestCase):
     '''
     TestRabiOscillations
@@ -174,9 +176,10 @@ class TestRabiOscillations(TestCase):
             for a, b in zip(meas, exp):
                 self.assertAlmostEqual(a, b, delta=abs_tol)
 
+# @SkipTest
 class TestVStirap(TestCase):
     '''
-    TestRabiOscillations
+    TestVStirap
     '''
 
     @classmethod
