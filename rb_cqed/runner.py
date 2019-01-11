@@ -209,6 +209,8 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
             self._configure_laser_couplings()
             self._configure_cavity_couplings()
 
+            self._clean_args_hams()
+
             # If no laser or cavity couplings were configured, add a 'no-action' coupling.  This is simply a workaround
             # required as Qutip.mesolve gets upset if it is passed empty Hamiltonian lists.
             if self.hams == []:
@@ -233,6 +235,15 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
         @abstractmethod
         def _get_dummy_coupling(self):
             raise NotImplementedError()
+
+        def _clean_args_hams(self):
+            '''
+            Cleans self.args_hams such that it has consistent typing, e.g. all integers are oncverted to floats.
+
+            This is important as the compiled C function wants consistent typing.
+            :return: None
+            '''
+            self.args_hams = {k:v if type(v)!=int else float(v) for k, v in self.args_hams.items()}
 
         def _compile(self, verbose=False):
             '''
@@ -290,36 +301,6 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
                 if verbose:
                     print("\n\t\tcompiling Cython function with rhs_compile", end='...')
                 rhs_compile(cleanup)
-
-            # try:
-            #     if verbose:
-            #         qt.rhs_generate(self.hams, self.c_op_list, args=self.args_hams, name=self.name, cleanup=cleanup)
-            #     else:
-            #         with io.StringIO() as buf, redirect_stderr(buf):
-            #             qt.rhs_generate(self.hams, self.c_op_list, args=self.args_hams, name=self.name, cleanup=cleanup)
-            # except Exception as e:
-            #     if verbose:
-            #         print("\n\tException in rhs comp: {0}...adding additional setups...".format(str(e)), end='')
-            #     for laser_couping in self.laser_couplings:
-            #         if laser_couping.setup_pyx != [] or laser_couping.add_pyx != []:
-            #             with fileinput.FileInput(self.name + '.pyx', inplace=True) as file:
-            #                 toWrite_setup = True
-            #                 toWrite_add = True
-            #                 for line in file:
-            #                     if '#' not in line and toWrite_setup:
-            #                         for input in laser_couping.setup_pyx:
-            #                             print(input, end='\n')
-            #                         toWrite_setup = False
-            #                     if '@cython.cdivision(True)' in line and toWrite_add:
-            #                         for input in laser_couping.add_pyx:
-            #                             print(input, end='\n')
-            #                         toWrite_add = False
-            #                     print(line, end='')
-            #                 fileinput.close()
-            #     if verbose:
-            #         print("and trying rhs generate again...", end='')
-            #     code = compile('from ' + self.name + ' import cy_td_ode_rhs', '<string>', 'exec')
-            #     exec(code, globals())
 
             if cleanup == True:
                 try:
