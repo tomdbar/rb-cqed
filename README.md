@@ -59,7 +59,7 @@ The notebooks in the [mathematica](mathematica) folder are not required to run t
 
 ## Requirements
 
-Other than standard libraries (numpy, matplotlib etc.) the IPython notebooks require the [QuTiP](http://qutip.org/) package.  The optimisation notebooks also use the [Pygmo](https://esa.github.io/pagmo2/index.html) package.  An [environment .yml file](supplementary/environment.yml) is provided in the [supplementary](supplementary/) folder.
+Other than standard libraries (numpy, matplotlib etc.) the IPython notebooks require the [QuTiP](http://qutip.org/) package.  The optimisation notebooks also use the [Pygmo](https://esa.github.io/pagmo2/index.html) package.  An [environment.yml file](supplementary/environment.yml) is provided in the [supplementary](supplementary/) folder.
 
 For Mathematica, [87rb-d2-in-B-field.nb](mathematica/87rb-d2-in-B-field.nb) requires the [Atomic Density Matrix (ADM)](http://rochesterscientific.com/ADM/) package.
 
