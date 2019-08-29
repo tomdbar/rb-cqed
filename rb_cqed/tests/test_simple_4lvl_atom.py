@@ -41,7 +41,8 @@ class TestVacuumRabiOscillations(TestCase):
             cavity=self.cav,
             laser_couplings=[],
             cavity_couplings=self.cavity_coupling,
-            verbose=True
+            verbose=True,
+            force_compile=False
         ).run(self.psi0, self.t_length, self.n_steps)
 
     def test_vacuum_rabi_oscillations(self):
@@ -137,7 +138,8 @@ class TestRabiOscillations(TestCase):
             cavity=self.cav,
             laser_couplings=self.laser_coupling,
             cavity_couplings=[],
-            verbose=True
+            verbose=True,
+            force_compile=False
         ).run(self.psi0, self.t_length, self.n_steps)
 
     def test_rabi_oscillations(self):
@@ -209,7 +211,8 @@ class TestVStirap(TestCase):
             cavity=self.cav,
             laser_couplings=self.laser_coupling,
             cavity_couplings=self.cavity_coupling,
-            verbose=True
+            verbose=True,
+            force_compile=False
         ).run(self.psi0, self.t_length, self.n_steps)
 
     def test_vstirap_with_py_pulse(self):

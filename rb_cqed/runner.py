@@ -48,7 +48,8 @@ class ExperimentalRunner():
                  cavity_couplings,
                  verbose=False,
                  reconfigurable_decay_rates=False,
-                 ham_pyx_dir=None):
+                 ham_pyx_dir=None,
+                 force_compile=False):
         self.atom = atom
         self.cavity = cavity
         self.laser_couplings = laser_couplings if type(laser_couplings) == list else [laser_couplings]
@@ -56,6 +57,7 @@ class ExperimentalRunner():
         self.verbose = verbose
         self.reconfigurable_decay_rates = reconfigurable_decay_rates
         self.ham_pyx_dir = ham_pyx_dir
+        self.force_compile=force_compile
 
         # Before additional off-resonance couplings are inferred in CompiledHamiltonianFactory.get(...), flag the
         # couplings explicitly set by the user.  This will be used to decide how to plot the results in
@@ -69,7 +71,8 @@ class ExperimentalRunner():
                                                                    self.cavity_couplings,
                                                                    self.verbose,
                                                                    self.reconfigurable_decay_rates,
-                                                                   self.ham_pyx_dir)
+                                                                   self.ham_pyx_dir,
+                                                                   self.force_compile)
 
     def run(self, psi0, t_length=1.2, n_steps=201):
 
@@ -120,30 +123,31 @@ class CompiledHamiltonianFactory(metaclass=Singleton):
 
     @classmethod
     def get(cls, atom, cavity, laser_couplings, cavity_couplings, verbose=True, reconfigurable_decay_rates=False,
-            ham_pyx_dir=None):
+            ham_pyx_dir=None, force_compile=False):
 
         ham = None
 
-        for c_ham in cls.__compiled_hamiltonians:
-            if c_ham._is_compatible(atom, cavity, laser_couplings, cavity_couplings, reconfigurable_decay_rates):
-                if verbose:
-                    if c_ham.ham_pyx_dir != None:
-                        print(
-                            "Pre-compiled Hamiltonian, {0}.pyx, is suitable to run this experiment.".format(c_ham.name))
-                    else:
-                        print("A pre-compiled Hamiltonian is suitable to run this experiment.")
+        if not force_compile:
+            for c_ham in cls.__compiled_hamiltonians:
+                if c_ham._is_compatible(atom, cavity, laser_couplings, cavity_couplings, reconfigurable_decay_rates):
+                    if verbose:
+                        if c_ham.ham_pyx_dir != None:
+                            print(
+                                "Pre-compiled Hamiltonian, {0}.pyx, is suitable to run this experiment.".format(c_ham.name))
+                        else:
+                            print("A pre-compiled Hamiltonian is suitable to run this experiment.")
 
-                ham = copy.deepcopy(c_ham)
+                    ham = copy.deepcopy(c_ham)
 
-                ham.atom = copy.deepcopy(atom)
-                ham.cavity = copy.deepcopy(cavity)
-                ham.laser_couplings = copy.deepcopy(laser_couplings)
-                ham.cavity_couplings = copy.deepcopy(cavity_couplings)
-                ham._configure_c_ops(args_only=True)
-                ham._configure_laser_couplings(args_only=True)
-                ham._configure_cavity_couplings(args_only=True)
+                    ham.atom = copy.deepcopy(atom)
+                    ham.cavity = copy.deepcopy(cavity)
+                    ham.laser_couplings = copy.deepcopy(laser_couplings)
+                    ham.cavity_couplings = copy.deepcopy(cavity_couplings)
+                    ham._configure_c_ops(args_only=True)
+                    ham._configure_laser_couplings(args_only=True)
+                    ham._configure_cavity_couplings(args_only=True)
 
-        if not ham:
+        if ham is None:
             if verbose:
                 print("No suitable pre-compiled Hamiltonian found.  Generating and compiling Cython file...", end='')
                 t_start = time.time()
