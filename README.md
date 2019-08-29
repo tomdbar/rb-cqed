@@ -45,7 +45,7 @@ Then download and install the [rb_cqed](rb_cqed/) package from this repository.
 (env-name) >>> conda create pip install [path ro rb_cqed]
 ```
 
-The test scripts can then be used to
+The test scripts can then be used to enusre the install was successful.
 ```console
 (env-name) >>> import rb_cqed.testing as rt
 (env-name) >>> rt.run()
