@@ -1,0 +1,2 @@
+include README.md
+include rb-cqed/atom87rb_params/*.txt
