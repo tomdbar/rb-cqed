@@ -1,7 +1,8 @@
-__all__ = ['Atom4lvl', 'Cavity', 'CavityBiref', 'LaserCoupling', 'CavityCoupling']
+__all__ = ['Atom4lvl', 'Atom87Rb', 'Cavity', 'CavityBiref', 'LaserCoupling', 'CavityCoupling']
 #todo: Add Atom87Rb when tested.
 
-from rb_cqed.globals import i
+import os
+from rb_cqed.globals import i, rb_cqed_path
 
 import numpy as np
 import textwrap
@@ -115,7 +116,7 @@ class Atom4lvl(RunnerDataClass):
         if self.sink_state != None:
             if not self.sink_state in self.g_states:
                 raise Exception(textwrap.dedent('''\
-                    Atom4lvl.sink_state must be a configured groud state.\
+                    Atom4lvl.sink_state must be a configured ground state.\
                     \tUnrecognised state: {0}\
                     \tAllowed states: {1}\
                     '''.format(self.sink_state, list(self.g_states.keys()))))
@@ -250,7 +251,7 @@ class Atom87Rb(RunnerDataClass):
     '''
     R_AL: np.matrix = np.sqrt(1 / 2) * np.matrix([[1, i],
                                                   [i, 1]])
-    params_file: InitVar[str] = './atom87rb_params/exp_params_0MHz.csv'
+    params_file: InitVar[str] = os.path.join(rb_cqed_path, 'atom87rb_params/exp_params_0MHz.csv')
     x_zero_energy_state: InitVar[str] = 'x2'
 
     def __post_init__(self, params_file, x_zero_energy_state):
@@ -340,8 +341,8 @@ class Atom87Rb(RunnerDataClass):
                     # coupling of a disallowed transition.
                     self.transition_strengths[x][g] = 0
             if np.abs(sum([x**2 for x  in self.transition_strengths[x].values()]) - 0.5) > 1e-3:
-                raise Warning(textwrap.dedent('''\
-                    The sum of the transition strengths from each excited level of the 87Rb D2 line should be 1/2.
+                 print(textwrap.dedent('''\
+                    Warning: The sum of the transition strengths from each excited level of the 87Rb D2 line should be 1/2.
                     For configured state {0} it is {1}.  Check the parameter file or carry on if you know what
                     you are doing.'''.format(x,sum(self.transition_strengths[x].values()))))
 

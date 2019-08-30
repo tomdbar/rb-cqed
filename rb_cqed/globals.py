@@ -1,3 +1,4 @@
+import inspect, os
 import numpy as np
 
 ##########################################
@@ -6,6 +7,14 @@ import numpy as np
 d = 3.584*10**(-29)
 i = np.complex(0,1)
 
+##########################################
+# Shared variables                       #
+##########################################
+rb_cqed_path = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
+
+##########################################
+# Shared functions/classes               #
+##########################################
 def R2args(R):
     alpha = np.clip(np.abs(R[0, 0]), 0, 1)
     phi1, phi2 = np.angle(R[0, 0]), np.angle(R[1, 0])
