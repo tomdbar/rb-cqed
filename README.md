@@ -61,7 +61,7 @@ Demonstration notebooks showing the basic functionality of rb_cqed.  *Learn by d
 
 ###### [Single simulations](jupyter_notebooks/notebooks-single)
 
-_The notebooks in [``jupyter_notebooks/notebooks-single``](jupyter_notebooks/notebooks-single) provide the gritty details of the code for simulating these systems.  They are not the easiest or recommended way to run the models.  Instead, the object oriented approach demonstrated in [notebooks-runner-demos](notebooks-runner-demos/) is recommended._
+_The notebooks in [``jupyter_notebooks/notebooks-single``](jupyter_notebooks/notebooks-single) provide the gritty details of the code for simulating these systems.  They are not the easiest or recommended way to run the models.  Instead, the object oriented approach demonstrated in [``jupyter_notebooks/rb_cqed_demos/``](jupyter_notebooks/rb_cqed_demos/) is recommended._
 
 The IPython notebooks in [``jupyter_notebooks/notebooks-single``](jupyter_notebooks/notebooks-single/) contain considerable overlap with one another and can best be thought of as multiple versions of the same notebook, tailored towards modelling variations of our atom-cavity system.  Although specific functionality is included in only some of the notebooks (i.e. where I think it is most useful), it is a straightforward task to mix-and-match this for a custom model that you might be interested in.
 
