@@ -57,7 +57,7 @@ The test scripts can then be used to enusre the install was successful.
 
 ###### [Demos (Docs)](jupyter_notebooks/rb_cqed_demos/)
 
-Demonstration notebooks showing the basic functionality of rb_cqed.  *Learn by doing -- these serve as the documentation!*
+Demonstration notebooks showing the basic functionality of rb_cqed.  *Learn by doing - these serve as the documentation!*
 
 ###### [Single simulations](jupyter_notebooks/notebooks-single)
 
