@@ -61,37 +61,37 @@ Demonstration notebooks showing the basic functionality of rb_cqed.  *Learn by d
 
 ###### [Single simulations](jupyter_notebooks/notebooks-single)
 
-_The notebooks in [Single](notebooks-single/) provide the gritty details of the code for simulating these systems.  They are not the easiest or recommended way to run the models.  Instead, the object oriented approach demonstrated in [notebooks-runner-demos](notebooks-runner-demos/) is recommended._
+_The notebooks in [``jupyter_notebooks/notebooks-single``](jupyter_notebooks/notebooks-single) provide the gritty details of the code for simulating these systems.  They are not the easiest or recommended way to run the models.  Instead, the object oriented approach demonstrated in [notebooks-runner-demos](notebooks-runner-demos/) is recommended._
 
-The IPython notebooks in [jupyter_notebooks/notebooks-single](jupyter_notebooks/notebooks-single/) contain considerable overlap with one another and can best be thought of as multiple versions of the same notebook, tailored towards modelling variations of our atom-cavity system.  Although specific functionality is included in only some of the notebooks (i.e. where I think it is most useful), it is a straightforward task to mix-and-match this for a custom model that you might be interested in.
+The IPython notebooks in [``jupyter_notebooks/notebooks-single``](jupyter_notebooks/notebooks-single/) contain considerable overlap with one another and can best be thought of as multiple versions of the same notebook, tailored towards modelling variations of our atom-cavity system.  Although specific functionality is included in only some of the notebooks (i.e. where I think it is most useful), it is a straightforward task to mix-and-match this for a custom model that you might be interested in.
 
-- [vStirap-zeeman-scheme.ipyn](jupyter_notebooks/notebooks-single/py-pulses/vStirap-zeeman-scheme.ipynb) - For models that use all (or any subset) of the excited manifold and only the ground F=1,m_F={0,+/-1} sublevels.  As driving tranistions between these magentic sublevels often reuqires an external field to lift their degeneracy, nonlinear Zeeman effects are included along with cavity birefringence effects.
+- [``vStirap-zeeman-scheme.ipyn``](jupyter_notebooks/notebooks-single/py-pulses/vStirap-zeeman-scheme.ipynb) - For models that use all (or any subset) of the excited manifold and only the ground F=1,m_F={0,+/-1} sublevels.  As driving tranistions between these magentic sublevels often reuqires an external field to lift their degeneracy, nonlinear Zeeman effects are included along with cavity birefringence effects.
 
-- [vStirap-hyperfine-scheme.ipyn](jupyter_notebooks/notebooks-single/py-pulses/vStirap-hyperfine-scheme.ipynb) - For models that use all (or any subset) of both the excited and ground state manifolds.  Nonlinear Zeeman effects are included as above, however as all atomic levels can, in principle, be included in the model cavity birefringence effects are neglected in order that the dimension of our modelled Hilbert space does not get too unwieldy.  Additionally this notebook contains some examples of driving two-laser STIRAP transitions, where the cavity coupling is not required, to prepare or repump the atom in the desired state.  Some simple analysis of the system evolution for many emission+rempumping cycles is also included.
+- [``vStirap-hyperfine-scheme.ipyn``](jupyter_notebooks/notebooks-single/py-pulses/vStirap-hyperfine-scheme.ipynb) - For models that use all (or any subset) of both the excited and ground state manifolds.  Nonlinear Zeeman effects are included as above, however as all atomic levels can, in principle, be included in the model cavity birefringence effects are neglected in order that the dimension of our modelled Hilbert space does not get too unwieldy.  Additionally this notebook contains some examples of driving two-laser STIRAP transitions, where the cavity coupling is not required, to prepare or repump the atom in the desired state.  Some simple analysis of the system evolution for many emission+rempumping cycles is also included.
 
-There are additionally notebooks serving some of the same functionality in [c-pulses](jupyter_notebooks/notebooks-single/c-pulses) folder.  As the name suggests, these allow the laser pulses to be given as C functions, greatly increasing the speed of the simulations for certain pulse shapes.
+There are additionally notebooks serving some of the same functionality in [``jupyter_notebooks/notebooks-single/c-pulses``](jupyter_notebooks/notebooks-single/c-pulses) folder.  As the name suggests, these allow the laser pulses to be given as C functions, greatly increasing the speed of the simulations for certain pulse shapes.
 
 #### [Mathematica notebooks](mathematica)
 
-The notebooks in the [mathematica](mathematica) folder are not required to run the above models, however they are used to support the model.  Specifically:
+The notebooks in the [``mathematica_notebooks``](mathematica_notebooks) folder are not required to run the above models, however they are used to support the model.  Specifically:
 
-- [hamiltonian-derivation.nb](mathematica/hamiltonian-derivation.nb) - Details the derivation of the Hamiltonians used to model the system.  Hopefully this demystifies the relatively complex couplings hardcoded into the IPython notebooks!
+- [``hamiltonian-derivation.nb``](mathematica_notebooks/hamiltonian-derivation.nb) - Details the derivation of the Hamiltonians used to model the system.  Hopefully this demystifies the relatively complex couplings hardcoded into the IPython notebooks!
 
-- [87rb-d2-in-B-field.nb](mathematica/87rb-d2-in-B-field.nb) - Models the level structure and coupling strengths of the <sup>87</sup>Rb D<sub>2</sub> line in the presence of an exteral magnetic field.  This notebook produces the parameter files in the [params](rb_cqed/atom87rb_params) folder, which in turn are imported into the vStirap-xxx-scheme.ipyn notebooks to include nonlinear Zeeman effects.
+- [``87rb-d2-in-B-field.nb``](mathematica_notebooks/87rb-d2-in-B-field.nb) - Models the level structure and coupling strengths of the <sup>87</sup>Rb D<sub>2</sub> line in the presence of an exteral magnetic field.  This notebook produces the parameter files in the [params](rb_cqed/atom87rb_params) folder, which in turn are imported into the vStirap-xxx-scheme.ipyn notebooks to include nonlinear Zeeman effects.
 
-- [cavity-parameters](mathematica/cavity-parameters.nb) - A simple helper notebook that calculates the cavity parameters used in our models (such as the linewidth and atom-cavity coupling rates) from physical parameters such as the cavity length, mirror curvatures and so on.  This is intendned to assist in choose physically realistic cavity parameters in the notebooks in which they are not derived.  
+- [``cavity-parameters``](mathematica_notebooks/cavity-parameters.nb) - A simple helper notebook that calculates the cavity parameters used in our models (such as the linewidth and atom-cavity coupling rates) from physical parameters such as the cavity length, mirror curvatures and so on.  This is intendned to assist in choose physically realistic cavity parameters in the notebooks in which they are not derived.  
 
 ## Requirements
 
-Other than standard libraries (numpy, matplotlib etc.) the IPython notebooks require the [QuTiP](http://qutip.org/) package, version 4.3.1.  An [environment.yml file](supplementary/environment.yml) is provided in the [supplementary](supplementary/) folder.
+Other than standard libraries (numpy, matplotlib etc.) the IPython notebooks require the [QuTiP](http://qutip.org/) package, version 4.3.1.  An [``environment.yml``](supplementary/environment.yml)  file is provided in the [``supplementary/``](supplementary/) folder.
 
-For Mathematica, [87rb-d2-in-B-field.nb](mathematica/87rb-d2-in-B-field.nb) requires the [Atomic Density Matrix (ADM)](http://rochesterscientific.com/ADM/) package.
+For Mathematica, [``87rb-d2-in-B-field.nb``](mathematica_notebooks/87rb-d2-in-B-field.nb) requires the [Atomic Density Matrix (ADM)](http://rochesterscientific.com/ADM/) package.
 
 #### Patch for QuTiP as of 05/09/2018
 
 _Please note, the below is my speculation, I don't pretend to know the QuTiP package in detail, but for what it is worth..._
 
-As of QuTiP 4.3.1 I believe there is an issue with the [rhs_generate](https://github.com/qutip/qutip/blob/master/qutip/rhs_generate.py) function, which my notebooks use to generate the cython file for simulating the Hamiltonians.  The [mesolve](https://github.com/qutip/qutip/blob/master/qutip/mesolve.py) function seems to work as intended, however this is much slower when repeated simulating the same Hamiltonian with only changing variables.  After my own investigation I resolved the issue by changing lines 202-207  of [rhs_generate](https://github.com/qutip/qutip/blob/master/qutip/rhs_generate.py) from:
+As of QuTiP 4.3.1 I believe there is an issue with the [``rhs_generate``](https://github.com/qutip/qutip/blob/master/qutip/rhs_generate.py) function, which my notebooks use to generate the cython file for simulating the Hamiltonians.  The [mesolve](https://github.com/qutip/qutip/blob/master/qutip/mesolve.py) function seems to work as intended, however this is much slower when repeated simulating the same Hamiltonian with only changing variables.  After my own investigation I resolved the issue by changing lines 202-207  of [``rhs_generate``](https://github.com/qutip/qutip/blob/master/qutip/rhs_generate.py) from:
   ```  
    # add the constant part of the lagrangian
    if Lconst != 0:
@@ -109,4 +109,4 @@ As of QuTiP 4.3.1 I believe there is an issue with the [rhs_generate](https://gi
        Lptrs = [Lconst.data.indptr]+Lptrs
        Lcoeff = ["1.0"]+Lcoeff
    ```
-If you have similar issues I suggest you try the above, or alternatively use the [rhs_generate.py](rb_cqed/qutip_patches/rhs_generate.py) that provided, where I have already made the change.
+If you have similar issues I suggest you try the above, or alternatively use the [``rhs_generate.py``](rb_cqed/qutip_patches/rhs_generate.py) that provided, where I have already made the change.
