@@ -23,7 +23,7 @@ Also contained is a collection of IPython notebooks, supported by Mathematica no
 
 [2] Barrett, T. D. et al., Polarisation oscillations in birefringent emitter-cavity systems, [Phys. Rev. Lett. **122**, 083602 (2019)](https://doi.org/10.1103/PhysRevLett.122.083602).
 
-[3] Barrett, T. D. et al., Pushing Purcell-enhancement beyond its limits. [arxiv:1903.08628 (2019)](https://arxiv.org/abs/1903.08628).
+[3] Barrett, T. D. et al., Pushing Purcell-enhancement beyond its limits, [arxiv:1903.08628 (2019)](https://arxiv.org/abs/1903.08628).
 
 ## Installation
 
