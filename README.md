@@ -42,7 +42,7 @@ Recommended requirements:
 
 Then download and install the [rb_cqed](rb_cqed/) package from this repository.
 ```console
-(env-name) >>> conda create pip install [path ro rb_cqed]
+(env-name) >>> pip install [path ro rb_cqed]
 ```
 
 The test scripts can then be used to enusre the install was successful.
