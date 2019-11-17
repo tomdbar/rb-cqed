@@ -7,7 +7,7 @@ This repository contains the rb_cqed package for modelling cavity-QED.  This all
 
 Beyond simple toy models, the focus is on the production of single photons from a single <sup>87</sup>Rb atom coupled to a cavity using a vacuum-stimulated Raman adiabatic passage (vSTIRAP) process on the D<sub>2</sub> line.
 
-In particular these models includes a couple of effects - and supported the corresponding work - that have not been previously considered in such as system, namely:
+In particular these models include a two effects (and supported the corresponding work) that have not been previously considered in such as system:
 - Nonlinear Zeeman effects that modify the energy levels and coupling strengths of the excited manifold of the D<sub>2</sub> line [1].
 - Cavity birefringence, where the polarisation eigenmodes of the cavity are non-degenerate [2,3].
 
