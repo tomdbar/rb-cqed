@@ -89,7 +89,7 @@ The notebooks in the [``mathematica_notebooks``](mathematica_notebooks) folder a
 
 - [``87rb-d2-in-B-field.nb``](mathematica_notebooks/87rb-d2-in-B-field.nb) - Models the level structure and coupling strengths of the <sup>87</sup>Rb D<sub>2</sub> line in the presence of an exteral magnetic field.  This notebook produces the parameter files in the [params](rb_cqed/atom87rb_params) folder, which in turn are imported into the vStirap-xxx-scheme.ipyn notebooks to include nonlinear Zeeman effects.
 
-- [``cavity-parameters``](mathematica_notebooks/cavity-parameters.nb) - A simple helper notebook that calculates the cavity parameters used in our models (such as the linewidth and atom-cavity coupling rates) from physical parameters such as the cavity length, mirror curvatures and so on.  This is intendned to assist in choose physically realistic cavity parameters in the notebooks in which they are not derived.  
+- [``cavity-parameters``](mathematica_notebooks/cavity-parameters.nb) - A simple helper notebook that calculates the cavity parameters used in our models (such as the linewidth and atom-cavity coupling rates) from physical parameters such as the cavity length, mirror curvatures and so on.  This is intendned to assist in choosing physically realistic cavity parameters in the notebooks in which they are not derived.  
 
 ## Requirements
 
