@@ -1,6 +1,16 @@
 # rb-cqed
 
+[![Generic badge](https://img.shields.io/badge/arXiv-1804.10455-<COLOR>.svg)](https://arxiv.org/abs/1804.10455)
+[![Generic badge](https://img.shields.io/badge/arXiv-1807.07633-<COLOR>.svg)](https://arxiv.org/abs/1807.07633)
+[![Generic badge](https://img.shields.io/badge/arXiv-1903.08628-<COLOR>.svg)](https://arxiv.org/abs/1903.08628)
+[![MIT License](https://img.shields.io/apm/l/atomic-design-ui.svg?)](./LICENSE)
+[![Version](https://badge.fury.io/gh/tterb%2FHyde.svg)](https://badge.fury.io/gh/tterb%2FHyde)
+
+---
+
 This repository contains the rb_cqed package for modelling cavity-QED.  This allows for easy simulations of coupled emitter-cavity system.
+
+---
 
 ![alt text](example_figures/example_rabi_0.png)
 ![alt text](example_figures/example_rabi_1.png) 
@@ -23,7 +33,7 @@ Also contained is a collection of IPython notebooks, supported by Mathematica no
 
 [2] Barrett, T. D. et al., Polarisation oscillations in birefringent emitter-cavity systems, [Phys. Rev. Lett. **122**, 083602 (2019)](https://doi.org/10.1103/PhysRevLett.122.083602).
 
-[3] Barrett, T. D. et al., Pushing Purcell-enhancement beyond its limits, [arxiv:1903.08628 (2019)](https://arxiv.org/abs/1903.08628).
+[3] Barrett, T. D. et al., Pushing Purcell-enhancement beyond its limits, [arxiv:1903.08628 (2019)](https://arxiv.org/abs/1903.08628)[New J. Phys **22**, 063013 (2020)](https://iopscience.iop.org/article/10.1088/1367-2630/ab8ab0).
 
 ## Installation
 
