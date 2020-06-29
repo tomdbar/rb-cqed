@@ -119,4 +119,4 @@ As of QuTiP 4.3.1 I believe there is an issue with the [``rhs_generate``](https:
        Lptrs = [Lconst.data.indptr]+Lptrs
        Lcoeff = ["1.0"]+Lcoeff
    ```
-If you have similar issues I suggest you try the above, or alternatively use the [``rhs_generate.py``](rb_cqed/qutip_patches/rhs_generate.py) that provided, where I have already made the change.
+If you have similar issues I suggest you try the above, or alternatively use the [``rhs_generate.py``](rb_cqed/qutip_patches/rhs_generate.py) file provided, where I have already made the change.
