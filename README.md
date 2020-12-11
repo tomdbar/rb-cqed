@@ -4,7 +4,6 @@
 [![Generic badge](https://img.shields.io/badge/arXiv-1807.07633-<COLOR>.svg)](https://arxiv.org/abs/1807.07633)
 [![Generic badge](https://img.shields.io/badge/arXiv-1903.08628-<COLOR>.svg)](https://arxiv.org/abs/1903.08628)
 [![MIT License](https://img.shields.io/apm/l/atomic-design-ui.svg?)](./LICENSE)
-[![Version](https://badge.fury.io/gh/tterb%2FHyde.svg)](https://badge.fury.io/gh/tterb%2FHyde)
 
 ---
 
